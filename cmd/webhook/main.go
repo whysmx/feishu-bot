@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/config"
 	"feishu-bot/internal/notification"
@@ -12,6 +13,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	larkcard "github.com/larksuite/oapi-sdk-go/v3/card"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	"github.com/larksuite/oapi-sdk-go/v3/core/httpserverext"
 )
 
 func main() {
@@ -74,6 +78,8 @@ func main() {
 
 	// 初始化webhook处理器
 	webhookHandler := notification.NewWebhookHandler(sessionManager, notificationSender, userMappingService)
+	
+
 
 	// 设置路由
 	router := gin.Default()
@@ -151,6 +157,27 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"cleaned_sessions": cleaned,
 		})
+	})
+
+	// 处理飞书卡片交互事件 - 使用Gin路由
+	router.POST("/webhook/card", func(c *gin.Context) {
+		log.Printf("Card action received via HTTP webhook")
+		
+		// 创建一个临时的CardAction处理器
+		cardActionHandler := larkcard.NewCardActionHandler("", "", func(ctx context.Context, cardAction *larkcard.CardAction) (interface{}, error) {
+			log.Printf("Processing card action: %s", larkcore.Prettify(cardAction))
+			
+			// 这里暂时返回成功响应，实际的处理逻辑需要数据类型适配
+			// TODO: 需要将 *larkcard.CardAction 转换为 *callback.CardActionTriggerEvent
+			return map[string]interface{}{
+				"success": true,
+				"message": "Card action processed successfully",
+			}, nil
+		})
+		
+		// 使用SDK的处理函数
+		handlerFunc := httpserverext.NewCardActionHandlerFunc(cardActionHandler)
+		handlerFunc(c.Writer, c.Request)
 	})
 
 	log.Printf("Starting webhook server on port %d", port)
