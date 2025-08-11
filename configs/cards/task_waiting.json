@@ -1,0 +1,143 @@
+{
+  "config": {
+    "wide_screen_mode": true,
+    "enable_forward": true
+  },
+  "elements": [
+    {
+      "tag": "div",
+      "fields": [
+        {
+          "is_short": true,
+          "text": {
+            "content": "⏳ **等待用户输入**",
+            "tag": "lark_md"
+          }
+        },
+        {
+          "is_short": true,
+          "text": {
+            "content": "**状态:** 🔄 等待中",
+            "tag": "lark_md"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "div",
+      "fields": [
+        {
+          "is_short": true,
+          "text": {
+            "content": "**项目:** {{project_name}}",
+            "tag": "lark_md"
+          }
+        },
+        {
+          "is_short": true,
+          "text": {
+            "content": "**等待时间:** {{timestamp}}",
+            "tag": "lark_md"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**当前任务:** {{description}}",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**会话令牌:** `{{token}}`",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**请输入下一步操作:**",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "input",
+      "element": {
+        "tag": "plain_text_input",
+        "placeholder": {
+          "content": "输入您的命令，例如: run tests and commit changes",
+          "tag": "plain_text"
+        },
+        "multiline": false,
+        "max_length": 500
+      },
+      "name": "command_input"
+    },
+    {
+      "tag": "note",
+      "elements": [
+        {
+          "tag": "plain_text",
+          "content": "💡 您也可以直接发送消息，格式: 令牌: 命令"
+        }
+      ]
+    },
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "action",
+      "actions": [
+        {
+          "tag": "button",
+          "text": {
+            "content": "💬 发送命令",
+            "tag": "plain_text"
+          },
+          "type": "primary",
+          "value": {
+            "action": "send_command",
+            "token": "{{token}}"
+          }
+        },
+        {
+          "tag": "button",
+          "text": {
+            "content": "📋 查看选项",
+            "tag": "plain_text"
+          },
+          "type": "default",
+          "value": {
+            "action": "view_options",
+            "token": "{{token}}"
+          }
+        },
+        {
+          "tag": "button",
+          "text": {
+            "content": "❌ 结束会话",
+            "tag": "plain_text"
+          },
+          "type": "danger",
+          "value": {
+            "action": "end_session",
+            "token": "{{token}}"
+          }
+        }
+      ]
+    }
+  ],
+  "header": {
+    "title": {
+      "content": "Claude Code 等待输入",
+      "tag": "plain_text"
+    },
+    "template": "blue"
+  }
+}

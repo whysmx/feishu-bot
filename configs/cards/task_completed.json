@@ -1,0 +1,123 @@
+{
+  "config": {
+    "wide_screen_mode": true,
+    "enable_forward": true
+  },
+  "elements": [
+    {
+      "tag": "div",
+      "fields": [
+        {
+          "is_short": true,
+          "text": {
+            "content": "🎉 **任务执行完成**",
+            "tag": "lark_md"
+          }
+        },
+        {
+          "is_short": true,
+          "text": {
+            "content": "**状态:** ✅ 已完成",
+            "tag": "lark_md"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "div",
+      "fields": [
+        {
+          "is_short": true,
+          "text": {
+            "content": "**项目:** {{project_name}}",
+            "tag": "lark_md"
+          }
+        },
+        {
+          "is_short": true,
+          "text": {
+            "content": "**完成时间:** {{timestamp}}",
+            "tag": "lark_md"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**任务描述:** {{description}}",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**会话令牌:** `{{token}}`",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "note",
+      "elements": [
+        {
+          "tag": "plain_text",
+          "content": "💡 您可以使用令牌继续远程控制Claude Code会话，格式: 令牌: 命令"
+        }
+      ]
+    },
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "action",
+      "actions": [
+        {
+          "tag": "button",
+          "text": {
+            "content": "📝 继续工作",
+            "tag": "plain_text"
+          },
+          "type": "primary",
+          "value": {
+            "action": "continue_work",
+            "token": "{{token}}"
+          }
+        },
+        {
+          "tag": "button",
+          "text": {
+            "content": "📊 查看状态",
+            "tag": "plain_text"
+          },
+          "type": "default",
+          "value": {
+            "action": "view_status",
+            "token": "{{token}}"
+          }
+        },
+        {
+          "tag": "button",
+          "text": {
+            "content": "❌ 结束会话",
+            "tag": "plain_text"
+          },
+          "type": "danger",
+          "value": {
+            "action": "end_session",
+            "token": "{{token}}"
+          }
+        }
+      ]
+    }
+  ],
+  "header": {
+    "title": {
+      "content": "Claude Code 任务完成通知",
+      "tag": "plain_text"
+    },
+    "template": "green"
+  }
+}

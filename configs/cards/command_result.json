@@ -1,0 +1,143 @@
+{
+  "config": {
+    "wide_screen_mode": true,
+    "enable_forward": false
+  },
+  "elements": [
+    {
+      "tag": "div",
+      "fields": [
+        {
+          "is_short": true,
+          "text": {
+            "content": "{{#if success}}✅ **命令执行成功**{{else}}❌ **命令执行失败**{{/if}}",
+            "tag": "lark_md"
+          }
+        },
+        {
+          "is_short": true,
+          "text": {
+            "content": "**执行方法:** {{method}}",
+            "tag": "lark_md"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**令牌:** `{{token}}`",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "**执行命令:** `{{command}}`",
+        "tag": "lark_md"
+      }
+    },
+    {{#if success}}
+    {{#if output}}
+    {
+      "tag": "div",
+      "text": {
+        "content": "**执行输出:**",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "div",
+      "text": {
+        "content": "```\n{{output}}\n```",
+        "tag": "lark_md"
+      }
+    },
+    {{/if}}
+    {
+      "tag": "note",
+      "elements": [
+        {
+          "tag": "plain_text",
+          "content": "✅ 命令已成功发送到Claude Code会话"
+        }
+      ]
+    }
+    {{else}}
+    {
+      "tag": "div",
+      "text": {
+        "content": "**错误信息:** {{error}}",
+        "tag": "lark_md"
+      }
+    },
+    {
+      "tag": "note",
+      "elements": [
+        {
+          "tag": "plain_text",
+          "content": "❌ 命令执行失败，请检查令牌和命令格式"
+        }
+      ]
+    }
+    {{/if}},
+    {
+      "tag": "hr"
+    },
+    {
+      "tag": "action",
+      "actions": [
+        {{#if success}}
+        {
+          "tag": "button",
+          "text": {
+            "content": "🔄 继续执行",
+            "tag": "plain_text"
+          },
+          "type": "primary",
+          "value": {
+            "action": "continue_work",
+            "token": "{{token}}"
+          }
+        },
+        {{else}}
+        {
+          "tag": "button",
+          "text": {
+            "content": "🔄 重试命令",
+            "tag": "plain_text"
+          },
+          "type": "primary",
+          "value": {
+            "action": "retry_command",
+            "token": "{{token}}",
+            "command": "{{command}}"
+          }
+        },
+        {{/if}}
+        {
+          "tag": "button",
+          "text": {
+            "content": "📊 查看会话",
+            "tag": "plain_text"
+          },
+          "type": "default",
+          "value": {
+            "action": "view_session",
+            "token": "{{token}}"
+          }
+        }
+      ]
+    }
+  ],
+  "header": {
+    "title": {
+      "content": "{{#if success}}命令执行成功{{else}}命令执行失败{{/if}}",
+      "tag": "plain_text"
+    },
+    "template": "{{#if success}}green{{else}}red{{/if}}"
+  }
+}

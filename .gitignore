@@ -1,0 +1,44 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境配置
+.env
+.env.local
+
+# 运行时数据
+data/sessions.json
+data/logs/
+*.log
+
+# 构建输出
+bin/
+dist/
+build/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+.claude/
+.cursor/
+.serena/
+configs/security/whitelist.yaml
+configs/config.yaml
+temlp/
+Claude-Code-Remote-Analysis.md
