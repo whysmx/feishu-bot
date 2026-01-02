@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/bot/handlers"
@@ -9,7 +10,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -21,14 +24,24 @@ import (
 )
 
 func main() {
-	log.Println("Starting Feishu Bot...")
+	log.Printf("Starting Feishu Bot... version=%s build_time=%s commit=%s", buildVersion, buildTime, buildCommit)
+
+	if path, loaded := loadDotEnv(".env", "feishu-bot/.env"); loaded {
+		log.Printf("Loaded .env from %s", path)
+	} else {
+		log.Println("No .env found; relying on existing environment variables")
+	}
 
 	// 获取配置
-	appID := getEnv("FEISHU_APP_ID", "cli_a8058428d478501c")
-	appSecret := getEnv("FEISHU_APP_SECRET", "BMcKHGIcA3BeS2WlIrIPpdPp0qoupyjK")
+	appID := getEnv("FEISHU_APP_ID", "")
+	if appID == "" {
+		log.Fatal("FEISHU_APP_ID is required")
+	}
+	appSecret := getEnv("FEISHU_APP_SECRET", "")
 	if appSecret == "" {
 		log.Fatal("FEISHU_APP_SECRET is required")
 	}
+	log.Printf("Using FEISHU_APP_ID=%s", appID)
 
 	sessionStorageFile := getEnv("SESSION_STORAGE_FILE", "data/sessions.json")
 	logLevel := getEnv("LOG_LEVEL", "info")
@@ -64,8 +77,8 @@ func main() {
 	notificationSender := notification.NewFeishuNotificationSender(feishuClient)
 
 	// 初始化消息处理器（暂时传入nil作为命令执行器）
-	messageHandler := handlers.NewMessageHandler(sessionManager, nil, notificationSender)
-	
+	messageHandler := handlers.NewMessageHandler(sessionManager, nil, notificationSender, feishuClient)
+
 	// 初始化卡片交互处理器
 	cardHandler := handlers.NewCardActionHandler(sessionManager, nil, notificationSender)
 
@@ -107,9 +120,6 @@ func main() {
 			if chatType == "p2p" {
 				// 单聊消息
 				return messageHandler.HandleP2PMessage(ctx, event)
-			} else if chatType == "group" {
-				// 群聊消息
-				return messageHandler.HandleGroupMessage(ctx, event)
 			}
 
 			return nil
@@ -117,21 +127,21 @@ func main() {
 		// 处理卡片交互事件 - 按照官方示例的方式处理
 		OnP2CardActionTrigger(func(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 			log.Printf("[OnP2CardActionTrigger] Card action triggered: %s", larkcore.Prettify(event))
-			
+
 			// 读取action值
 			if event.Event.Action.Value == nil {
 				log.Printf("No action value in card event")
 				return &callback.CardActionTriggerResponse{}, nil
 			}
-			
+
 			action, ok := event.Event.Action.Value["action"].(string)
 			if !ok {
 				log.Printf("Cannot parse action from card event")
 				return &callback.CardActionTriggerResponse{}, nil
 			}
-			
+
 			log.Printf("Processing card action: %s", action)
-			
+
 			// 处理不同的action
 			switch action {
 			case "complete_alarm":
@@ -146,7 +156,7 @@ func main() {
 						}
 					}
 				}
-				
+
 				// 构造响应，更新卡片为完成状态
 				response := &callback.CardActionTriggerResponse{
 					Toast: &callback.Toast{
@@ -159,16 +169,16 @@ func main() {
 							TemplateID: "AAqz1Y1QyEzLF", // 使用完成状态的卡片模板
 							TemplateVariable: map[string]interface{}{
 								"complete_time": time.Now().Format("2006-01-02 15:04:05 (UTC+8)"), // 动态完成时间
-								"notes":         notes,                                               // 用户输入的备注
-								"open_id":       event.Event.Operator.OpenID,                        // 处理人
+								"notes":         notes,                                            // 用户输入的备注
+								"open_id":       event.Event.Operator.OpenID,                      // 处理人
 							},
 						},
 					},
 				}
-				
+
 				log.Printf("Card action processed successfully, notes: %s", notes)
 				return response, nil
-				
+
 			case "send_command", "continue_work", "view_status", "view_session", "view_options", "end_session", "retry_command":
 				// 对于我们系统的特定action，调用内部handler
 				response, err := cardHandler.HandleCardAction(ctx, event)
@@ -182,7 +192,7 @@ func main() {
 					}, nil
 				}
 				return response, nil
-				
+
 			default:
 				log.Printf("Unknown card action: %s", action)
 				return &callback.CardActionTriggerResponse{
@@ -194,10 +204,15 @@ func main() {
 			}
 		})
 
+	wsLogLevel := larkcore.LogLevelInfo
+	if logLevel == "debug" {
+		wsLogLevel = larkcore.LogLevelDebug
+	}
+
 	// 启动WebSocket长连接
 	wsClient := larkws.NewClient(appID, appSecret,
 		larkws.WithEventHandler(eventHandler),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
+		larkws.WithLogLevel(wsLogLevel),
 	)
 
 	log.Println("Starting WebSocket connection to Feishu...")
@@ -207,23 +222,22 @@ func main() {
 	}
 }
 
+var (
+	buildVersion = "dev"
+	buildTime    = "unknown"
+	buildCommit  = "unknown"
+)
+
 // sendWelcomeMessage 发送欢迎消息
 func sendWelcomeMessage(sender notification.NotificationSender, openID string) error {
-	welcomeText := `🎉 欢迎使用 Claude Code 远程控制机器人！
-
-主要功能：
-• 📬 接收 Claude Code 任务完成通知
-• ⌨️ 远程发送命令到 Claude Code 会话
-• 📊 查看和管理活跃会话
-• 🔒 安全的令牌验证机制
+welcomeText := `🎉 欢迎使用 Claude CLI 对话机器人！
 
 使用方法：
-1. 当 Claude Code 完成任务或需要输入时，您将收到通知卡片和唯一令牌
-2. 通过 "令牌: 命令" 格式发送消息来远程控制，例如：ABC12345: run tests
-3. 使用 /sessions 查看所有活跃会话
-4. 使用 /help 获取帮助信息
+• 直接发送任何消息即可开始对话
 
-开始您的远程开发之旅吧！`
+说明：
+• 所有消息会直接透传给 Claude CLI
+• 不做命令拦截或二次加工`
 
 	// 尝试发送文本消息
 	if textSender, ok := sender.(interface {
@@ -238,23 +252,13 @@ func sendWelcomeMessage(sender notification.NotificationSender, openID string) e
 
 // sendHelpMessage 发送帮助消息
 func sendHelpMessage(sender notification.NotificationSender, openID string) error {
-	helpText := `💡 Claude Code 远程控制机器人帮助
+	helpText := `💡 使用说明
 
-命令格式：
-• <令牌>: <命令> - 执行远程命令，例如：ABC12345: npm test
-• /sessions - 查看所有活跃会话
-• /help - 显示此帮助信息
+• 直接发送任何消息即可对话
 
-令牌说明：
-• 每个任务会生成一个8位唯一令牌（如：ABC12345）
-• 令牌有效期为24小时
-• 使用令牌可以安全地控制对应的Claude Code会话
-
-支持的命令示例：
-• ABC12345: run tests - 运行测试
-• ABC12345: git status - 查看Git状态
-• ABC12345: npm run build - 构建项目
-• ABC12345: help - 获取Claude Code帮助`
+说明：
+• 所有消息会直接透传给 Claude CLI
+• 不做命令拦截或二次加工`
 
 	if textSender, ok := sender.(interface {
 		SendTextNotification(openID, message string) error
@@ -282,11 +286,72 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+func loadDotEnv(paths ...string) (string, bool) {
+	for _, candidate := range paths {
+		path := candidate
+		if !filepath.IsAbs(path) {
+			if wd, err := os.Getwd(); err == nil {
+				path = filepath.Join(wd, path)
+			}
+		}
+
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "export ") {
+				line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			if key == "" {
+				continue
+			}
+			value = strings.Trim(value, `"'`)
+			if _, exists := os.LookupEnv(key); !exists {
+				_ = os.Setenv(key, value)
+			}
+		}
+
+		return path, true
+	}
+
+	return "", false
+}
+
 // getEnvInt 获取整数环境变量
 func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "1", "true", "yes", "y", "on":
+			return true
+		case "0", "false", "no", "n", "off":
+			return false
 		}
 	}
 	return defaultValue

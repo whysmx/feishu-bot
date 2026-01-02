@@ -27,6 +27,7 @@ data/logs/
 bin/
 dist/
 build/
+bot
 
 # 操作系统
 .DS_Store

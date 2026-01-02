@@ -1,9 +1,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -12,8 +17,12 @@ import (
 
 // FeishuClient 飞书客户端封装
 type FeishuClient struct {
-	client *lark.Client
-	config FeishuConfig
+	client             *lark.Client
+	config             FeishuConfig
+	httpClient         *http.Client
+	tenantAccessToken  string
+	tokenExpireTime    time.Time
+	tokenMutex         sync.RWMutex
 }
 
 // FeishuConfig 飞书配置
@@ -34,10 +43,12 @@ type CardTemplates struct {
 // NewFeishuClient 创建飞书客户端
 func NewFeishuClient(config FeishuConfig) *FeishuClient {
 	client := lark.NewClient(config.AppID, config.AppSecret)
-	
+
 	return &FeishuClient{
-		client: client,
-		config: config,
+		client:          client,
+		config:          config,
+		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		tokenExpireTime: time.Now(), // 初始化为过去时间，强制首次获取 token
 	}
 }
 
@@ -236,4 +247,88 @@ type FeishuError struct {
 
 func (e *FeishuError) Error() string {
 	return e.Message
+}
+
+// GetTenantAccessToken 获取 tenant_access_token（带缓存）
+func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
+	// 先尝试读锁检查缓存
+	fc.tokenMutex.RLock()
+	if fc.tenantAccessToken != "" && time.Now().Before(fc.tokenExpireTime) {
+		token := fc.tenantAccessToken
+		fc.tokenMutex.RUnlock()
+		return token, nil
+	}
+	fc.tokenMutex.RUnlock()
+
+	// 缓存失效或不存在，获取新 token
+	fc.tokenMutex.Lock()
+	defer fc.tokenMutex.Unlock()
+
+	// 双重检查，防止并发获取
+	if fc.tenantAccessToken != "" && time.Now().Before(fc.tokenExpireTime) {
+		return fc.tenantAccessToken, nil
+	}
+
+	// 调用飞书 API 获取 token
+	type tokenReq struct {
+		AppID     string `json:"app_id"`
+		AppSecret string `json:"app_secret"`
+	}
+
+	type tokenResp struct {
+		Code              int    `json:"code"`
+		TenantAccessToken string `json:"tenant_access_token"`
+		Expire            int    `json:"expire"`
+	}
+
+	reqData := tokenReq{
+		AppID:     fc.config.AppID,
+		AppSecret: fc.config.AppSecret,
+	}
+
+	jsonData, err := json.Marshal(reqData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST",
+		"https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+		bytes.NewReader(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := fc.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := httpMaxBytesReader(resp.Body, 1<<20) // 限制 1MB
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var result tokenResp
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if result.Code != 0 {
+		return "", fmt.Errorf("API error: code=%d", result.Code)
+	}
+
+	// 缓存 token（提前 5 分钟过期）
+	fc.tenantAccessToken = result.TenantAccessToken
+	fc.tokenExpireTime = time.Now().Add(time.Duration(result.Expire-300) * time.Second)
+
+	return result.TenantAccessToken, nil
+}
+
+// httpMaxBytesReader 限制读取最大字节数
+func httpMaxBytesReader(r io.Reader, maxBytes int64) ([]byte, error) {
+	limited := io.LimitReader(r, maxBytes)
+	return io.ReadAll(limited)
 }
