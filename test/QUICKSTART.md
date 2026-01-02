@@ -57,7 +57,7 @@ export FEISHU_TEST_CHAT_ID="oc_xxxxx"
 或者创建 `.env` 文件：
 
 ```bash
-cd /Users/wen/Desktop/code/18feishu/feishu-bot/feishu-bot
+cd /Users/wen/Desktop/code/18feishu
 
 cat > .env <<EOF
 FEISHU_APP_ID=cli_xxxxx
@@ -80,7 +80,7 @@ sudo apt-get install jq
 
 **运行测试脚本：**
 ```bash
-cd /Users/wen/Desktop/code/18feishu/feishu-bot/feishu-bot/test
+cd /Users/wen/Desktop/code/18feishu/test
 ./test_feishu_api.sh
 ```
 

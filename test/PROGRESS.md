@@ -40,7 +40,7 @@
 **App ID**: `cli_a9dc39c0c2b8dbc8`
 **App Secret**: `Y0psnqB52LC50SvxnvSZo6jTUZS3CzHX`
 
-已保存到：`/Users/wen/Desktop/code/18feishu/feishu-bot/feishu-bot/.env`
+已保存到：`/Users/wen/Desktop/code/18feishu/.env`
 
 ---
 
@@ -91,7 +91,7 @@
 
 ```bash
 # 创建 .env 文件
-cd /Users/wen/Desktop/code/18feishu/feishu-bot/feishu-bot
+cd /Users/wen/Desktop/code/18feishu
 cat > .env <<EOF
 FEISHU_APP_ID=cli_a9dcd152c1f8dbd7
 FEISHU_APP_SECRET=你在浏览器中复制的Secret

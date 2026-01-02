@@ -92,7 +92,7 @@
 在项目根目录创建 `.env` 文件：
 
 ```bash
-cd /Users/wen/Desktop/code/18feishu/feishu-bot/feishu-bot
+cd /Users/wen/Desktop/code/18feishu
 cp .env.example .env
 ```
 
