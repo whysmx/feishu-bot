@@ -16,6 +16,7 @@ import (
 	"time"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkapplication "github.com/larksuite/oapi-sdk-go/v3/service/application/v6"
@@ -26,7 +27,7 @@ import (
 func main() {
 	log.Printf("Starting Feishu Bot... version=%s build_time=%s commit=%s", buildVersion, buildTime, buildCommit)
 
-	if path, loaded := loadDotEnv(".env", "feishu-bot/.env"); loaded {
+	if path, loaded := loadDotEnv(".env"); loaded {
 		log.Printf("Loaded .env from %s", path)
 	} else {
 		log.Println("No .env found; relying on existing environment variables")
@@ -41,10 +42,14 @@ func main() {
 	if appSecret == "" {
 		log.Fatal("FEISHU_APP_SECRET is required")
 	}
-	log.Printf("Using FEISHU_APP_ID=%s", appID)
+	log.Printf("Using FEISHU_APP_ID=%s FEISHU_APP_SECRET=%s", appID, appSecret)
 
 	sessionStorageFile := getEnv("SESSION_STORAGE_FILE", "data/sessions.json")
 	logLevel := getEnv("LOG_LEVEL", "info")
+	larkLogLevel := larkcore.LogLevelInfo
+	if logLevel == "debug" {
+		larkLogLevel = larkcore.LogLevelDebug
+	}
 
 	// 设置日志级别
 	if logLevel == "debug" {
@@ -72,6 +77,13 @@ func main() {
 			SessionList:   getEnv("SESSION_LIST_CARD_ID", ""),
 		},
 	})
+
+	// 启动时做一次 token 自检，便于定位偶发 10014
+	if token, err := feishuClient.GetTenantAccessToken(); err != nil {
+		log.Printf("Tenant token self-check failed: %v", err)
+	} else {
+		log.Printf("Tenant token self-check ok: token=%s", token)
+	}
 
 	// 初始化通知发送器
 	notificationSender := notification.NewFeishuNotificationSender(feishuClient)
@@ -113,14 +125,44 @@ func main() {
 		}).
 		// 接收用户发送的消息
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			log.Printf("[OnP2MessageReceiveV1] Message received: %s", larkcore.Prettify(event))
+			appendEventTrace("ws_recv", event)
+			log.Printf("[OnP2MessageReceiveV1] Ack immediately; processing async")
+			go func(ev *larkim.P2MessageReceiveV1) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[OnP2MessageReceiveV1] Panic recovered: %v", r)
+					}
+				}()
 
-			chatType := *event.Event.Message.ChatType
+				appendEventTrace("handler_async", ev)
+				eventID := ""
+				if ev != nil && ev.EventV2Base != nil && ev.EventV2Base.Header != nil {
+					eventID = ev.EventV2Base.Header.EventID
+				}
+				messageID := ""
+				chatType := ""
+				if ev != nil && ev.Event != nil && ev.Event.Message != nil {
+					if ev.Event.Message.MessageId != nil {
+						messageID = *ev.Event.Message.MessageId
+					}
+					if ev.Event.Message.ChatType != nil {
+						chatType = *ev.Event.Message.ChatType
+					}
+				}
+				log.Printf("[OnP2MessageReceiveV1] event_id=%s message_id=%s chat_type=%s", eventID, messageID, chatType)
+				log.Printf("[OnP2MessageReceiveV1] Message received: %s", larkcore.Prettify(ev))
+				if ev == nil || ev.Event == nil || ev.Event.Message == nil || ev.Event.Message.ChatType == nil {
+					log.Printf("[OnP2MessageReceiveV1] Invalid event payload")
+					return
+				}
 
-			if chatType == "p2p" {
-				// 单聊消息
-				return messageHandler.HandleP2PMessage(ctx, event)
-			}
+				chatType = *ev.Event.Message.ChatType
+				if chatType == "p2p" {
+					if err := messageHandler.HandleP2PMessage(context.Background(), ev); err != nil {
+						log.Printf("Failed to handle P2P message: %v", err)
+					}
+				}
+			}(event)
 
 			return nil
 		}).
@@ -203,11 +245,12 @@ func main() {
 				}, nil
 			}
 		})
+	eventHandler.InitConfig(
+		larkevent.WithLogger(prefixedLogger{prefix: "LARK-EVENT"}),
+		larkevent.WithLogLevel(larkLogLevel),
+	)
 
-	wsLogLevel := larkcore.LogLevelInfo
-	if logLevel == "debug" {
-		wsLogLevel = larkcore.LogLevelDebug
-	}
+	wsLogLevel := larkLogLevel
 
 	// 启动WebSocket长连接
 	wsClient := larkws.NewClient(appID, appSecret,
@@ -227,6 +270,61 @@ var (
 	buildTime    = "unknown"
 	buildCommit  = "unknown"
 )
+
+type prefixedLogger struct {
+	prefix string
+}
+
+func (pl prefixedLogger) Debug(ctx context.Context, args ...interface{}) {
+	log.Printf("[%s][Debug] %s", pl.prefix, fmt.Sprint(args...))
+}
+
+func (pl prefixedLogger) Info(ctx context.Context, args ...interface{}) {
+	log.Printf("[%s][Info] %s", pl.prefix, fmt.Sprint(args...))
+}
+
+func (pl prefixedLogger) Warn(ctx context.Context, args ...interface{}) {
+	log.Printf("[%s][Warn] %s", pl.prefix, fmt.Sprint(args...))
+}
+
+func (pl prefixedLogger) Error(ctx context.Context, args ...interface{}) {
+	log.Printf("[%s][Error] %s", pl.prefix, fmt.Sprint(args...))
+}
+
+func appendEventTrace(tag string, ev *larkim.P2MessageReceiveV1) {
+	eventID := ""
+	messageID := ""
+	chatType := ""
+	openID := ""
+	if ev != nil && ev.EventV2Base != nil && ev.EventV2Base.Header != nil {
+		eventID = ev.EventV2Base.Header.EventID
+	}
+	if ev != nil && ev.Event != nil && ev.Event.Message != nil {
+		if ev.Event.Message.MessageId != nil {
+			messageID = *ev.Event.Message.MessageId
+		}
+		if ev.Event.Message.ChatType != nil {
+			chatType = *ev.Event.Message.ChatType
+		}
+	}
+	if ev != nil && ev.Event != nil && ev.Event.Sender != nil && ev.Event.Sender.SenderId != nil && ev.Event.Sender.SenderId.OpenId != nil {
+		openID = *ev.Event.Sender.SenderId.OpenId
+	}
+	line := fmt.Sprintf("%s pid=%d tag=%s event_id=%s message_id=%s chat_type=%s open_id=%s\n",
+		time.Now().Format(time.RFC3339), os.Getpid(), tag, eventID, messageID, chatType, openID)
+	writeTraceLine(line)
+}
+
+func writeTraceLine(line string) {
+	file, err := os.OpenFile("/tmp/feishu-event-trace.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		_, _ = file.WriteString(line)
+		_ = file.Close()
+		return
+	}
+	_ = os.WriteFile("/tmp/feishu-event-trace.err", []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
+	_ = os.WriteFile("/tmp/feishu-event-trace.log", []byte(line), 0644)
+}
 
 // sendWelcomeMessage 发送欢迎消息
 func sendWelcomeMessage(sender notification.NotificationSender, openID string) error {

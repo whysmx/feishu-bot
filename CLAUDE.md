@@ -249,14 +249,17 @@ func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2
 
 ❌ **错误 3**：旧实例 WebSocket 连接仍活跃
 - 症状：新实例收不到事件
-- 解决：`pkill -9 -f "./bot"` 完全停止旧进程
+- 解决：`./scripts/stop-bot.sh` 完全停止旧进程（含 go run 实例）
 
 **验证修复成功**：
 
 ```bash
 # 1. 重新编译并启动机器人
-go build -a -o bot cmd/bot/main.go
-nohup ./bot > /tmp/feishu-bot-latest.log 2>&1 &
+go build -a -o bin/bot cmd/bot/main.go
+./scripts/start-bot.sh
+
+# 或者一键重启（包含停止 + 编译 + 启动）
+./scripts/restart-bot.sh
 
 # 2. 等待 5-10 秒让飞书平台识别新连接
 
@@ -279,7 +282,7 @@ Card created and sent: card_id=7590672032577506233
 **Q: 修改代码后机器人行为没有变化**
 A: 可能的原因：
 1. Go 构建缓存 → 使用 `go build -a` 强制重新构建
-2. 旧的机器人进程仍在运行 → `pkill -9 -f "./bot"`
+2. 旧的机器人进程仍在运行 → `./scripts/stop-bot.sh`
 3. 飞书平台连接到旧实例 → 检查平台事件日志的时间戳
 
 **Q: 机器人收不到消息**
@@ -303,23 +306,20 @@ A:
 
 ```bash
 # 1. 停止所有机器人实例
-pkill -9 -f "./bot"
+./scripts/stop-bot.sh
 
-# 2. 验证没有残留进程
-ps aux | grep "\./bot" | grep -v grep
+# 2. 强制重新编译（清除构建缓存）
+go build -a -o bin/bot cmd/bot/main.go
 
-# 3. 强制重新编译（清除构建缓存）
-go build -a -o bot cmd/bot/main.go
+# 3. 启动新实例
+./scripts/start-bot.sh
 
-# 4. 启动新实例
-nohup ./bot > /tmp/feishu-bot-latest.log 2>&1 &
-
-# 5. 记录新进程 PID
+# 4. 记录新进程 PID
 echo "Bot PID: $!"
 
-# 6. 等待 5-10 秒让飞书平台识别新连接
+# 5. 等待 5-10 秒让飞书平台识别新连接
 
-# 7. 验证 WebSocket 连接成功
+# 6. 验证 WebSocket 连接成功
 tail -20 /tmp/feishu-bot-latest.log | grep "connected"
 ```
 

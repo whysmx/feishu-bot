@@ -18,6 +18,7 @@ import (
 type StreamEvent struct {
 	Type      string                 `json:"type"`
 	Event     map[string]interface{} `json:"event,omitempty"`
+	Message   map[string]interface{} `json:"message,omitempty"`
 	SessionID string                 `json:"session_id,omitempty"`
 	UUID      string                 `json:"uuid,omitempty"`
 }
@@ -39,6 +40,12 @@ type ClaudeManager struct {
 	stdout        io.ReadCloser
 	stderr        io.ReadCloser
 	cancel        context.CancelFunc
+	outputDone    chan struct{}
+	outputDoneOnce sync.Once
+	updateCh      chan textUpdate
+	updateDone    chan struct{}
+	updateOnce    sync.Once
+	sessionID     string
 	currentText   strings.Builder
 	textSequence  int
 	lastMessageID string
@@ -52,6 +59,11 @@ type ClaudeManager struct {
 type ClaudeConfig struct {
 	ProjectDir    string
 	InitialPrompt string
+}
+
+type textUpdate struct {
+	text     string
+	sequence int
 }
 
 // NewClaudeManager 创建 Claude 管理器
@@ -81,13 +93,18 @@ func (m *ClaudeManager) SetErrorCallback(cb func(err error)) {
 }
 
 // Start 启动 Claude CLI 进程
-func (m *ClaudeManager) Start(ctx context.Context, userMessage string) error {
+func (m *ClaudeManager) Start(ctx context.Context, userMessage, resumeSessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// 创建带取消的上下文
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
+	m.outputDone = make(chan struct{})
+	m.outputDoneOnce = sync.Once{}
+	m.updateCh = make(chan textUpdate, 1)
+	m.updateDone = make(chan struct{})
+	m.updateOnce = sync.Once{}
 
 	// 构建 Claude CLI 命令
 	// 使用项目目录作为工作目录
@@ -96,6 +113,10 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage string) error {
 		"--output-format", "stream-json", // 流式 JSON 输出
 		"--include-partial-messages", // 包含部分消息
 		"--verbose",                  // 详细输出
+	}
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+		m.sessionID = resumeSessionID
 	}
 
 	m.cmd = exec.CommandContext(ctx, "/Users/wen/.npm-global/bin/claude", append([]string{"--dangerously-skip-permissions"}, args...)...)
@@ -162,6 +183,7 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage string) error {
 	m.lastMessageID = ""
 
 	// 启动输出解析协程
+	go m.processUpdates()
 	go m.parseOutput()
 	go m.parseError()
 
@@ -170,11 +192,20 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage string) error {
 
 // parseOutput 解析 Claude CLI 输出
 func (m *ClaudeManager) parseOutput() {
-	scanner := bufio.NewScanner(m.stdout)
+	defer m.markOutputDone()
+	defer m.closeUpdateCh()
+	reader := bufio.NewReader(m.stdout)
 	lineCount := 0
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			log.Printf("[Claude CLI] Output read error: %v", err)
+		}
+		if len(line) == 0 && err != nil {
+			break
+		}
 		lineCount++
+		line = strings.TrimRight(line, "\r\n")
 
 		// 记录原始输出（前100行，方便调试）
 		if lineCount <= 100 {
@@ -198,14 +229,21 @@ func (m *ClaudeManager) parseOutput() {
 		switch event.Type {
 		case "stream_event":
 			m.handleStreamEvent(event)
+		case "assistant":
+			m.handleAssistantMessage(event)
 		case "system":
+			if event.SessionID != "" {
+				m.setSessionID(event.SessionID)
+			}
 			// 系统事件，记录但不处理
 			log.Printf("[Claude CLI] System event: %s", line)
 		case "error":
 			m.handleError(fmt.Errorf("claude error: %s", line))
 		}
+		if err == io.EOF {
+			break
+		}
 	}
-
 	log.Printf("[Claude CLI] Output ended, total lines: %d", lineCount)
 	// 输出结束，通知完成
 	m.notifyComplete()
@@ -242,6 +280,11 @@ func (m *ClaudeManager) handleStreamEvent(event StreamEvent) {
 		m.mu.Lock()
 		prevSeq := m.textSequence
 		prevMessageID := m.lastMessageID
+		if m.textSequence > 0 {
+			log.Printf("[ClaudeManager] message_start ignored (stream active): message_id=%s last_message_id=%s seq=%d", messageID, m.lastMessageID, m.textSequence)
+			m.mu.Unlock()
+			return
+		}
 		if messageID != "" && m.lastMessageID == messageID && m.textSequence > 0 {
 			log.Printf("[ClaudeManager] message_start ignored: message_id=%s last_message_id=%s seq=%d", messageID, m.lastMessageID, m.textSequence)
 			m.mu.Unlock()
@@ -264,6 +307,72 @@ func (m *ClaudeManager) handleStreamEvent(event StreamEvent) {
 		log.Printf("[ClaudeManager] message_stop received")
 		m.notifyComplete()
 	}
+}
+
+// handleAssistantMessage 处理完整的 assistant 消息快照
+func (m *ClaudeManager) handleAssistantMessage(event StreamEvent) {
+	assistantText := extractAssistantText(event.Message)
+	if assistantText == "" {
+		return
+	}
+
+	m.mu.Lock()
+	if len(assistantText) <= m.currentText.Len() {
+		m.mu.Unlock()
+		return
+	}
+
+	m.currentText.Reset()
+	m.currentText.WriteString(assistantText)
+
+	sequence := m.textSequence
+	if sequence <= 0 {
+		sequence = 1
+		m.textSequence = 2
+	} else {
+		m.textSequence++
+	}
+	callback := m.onTextDelta
+	m.mu.Unlock()
+
+	if callback != nil {
+		m.enqueueUpdate(assistantText, sequence)
+	}
+}
+
+func extractAssistantText(message map[string]interface{}) string {
+	if message == nil {
+		return ""
+	}
+
+	contentRaw, ok := message["content"]
+	if !ok {
+		return ""
+	}
+
+	contentSlice, ok := contentRaw.([]interface{})
+	if !ok {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, item := range contentSlice {
+		contentItem, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		itemType, _ := contentItem["type"].(string)
+		if itemType != "text" {
+			continue
+		}
+		text, _ := contentItem["text"].(string)
+		if text == "" {
+			continue
+		}
+		builder.WriteString(text)
+	}
+
+	return builder.String()
 }
 
 // handleTextDelta 处理文本增量
@@ -301,9 +410,7 @@ func (m *ClaudeManager) handleTextDelta(event StreamEvent) {
 
 	// 调用回调
 	if callback != nil {
-		if err := callback(fullText, sequence); err != nil {
-			m.handleError(fmt.Errorf("failed to send text delta: %w", err))
-		}
+		m.enqueueUpdate(fullText, sequence)
 	}
 }
 
@@ -359,6 +466,9 @@ func (m *ClaudeManager) Stop() {
 			m.cmd.Process.Kill()
 		}
 	}
+
+	m.closeUpdateCh()
+	m.markOutputDone()
 }
 
 // WaitForExit 等待进程退出
@@ -367,4 +477,99 @@ func (m *ClaudeManager) WaitForExit() error {
 		return m.cmd.Wait()
 	}
 	return nil
+}
+
+// WaitForOutput 等待输出解析完成
+func (m *ClaudeManager) WaitForOutput(ctx context.Context) error {
+	m.mu.Lock()
+	ch := m.outputDone
+	updateDone := m.updateDone
+	m.mu.Unlock()
+
+	if ch == nil {
+		return nil
+	}
+
+	select {
+	case <-ch:
+		if updateDone == nil {
+			return nil
+		}
+		select {
+		case <-updateDone:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *ClaudeManager) markOutputDone() {
+	m.outputDoneOnce.Do(func() {
+		if m.outputDone != nil {
+			close(m.outputDone)
+		}
+	})
+}
+
+func (m *ClaudeManager) setSessionID(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	m.mu.Lock()
+	m.sessionID = sessionID
+	m.mu.Unlock()
+}
+
+func (m *ClaudeManager) GetSessionID() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessionID
+}
+
+func (m *ClaudeManager) enqueueUpdate(text string, sequence int) {
+	if m.updateCh == nil {
+		return
+	}
+	update := textUpdate{text: text, sequence: sequence}
+	select {
+	case m.updateCh <- update:
+	default:
+		select {
+		case <-m.updateCh:
+		default:
+		}
+		m.updateCh <- update
+	}
+}
+
+func (m *ClaudeManager) closeUpdateCh() {
+	m.updateOnce.Do(func() {
+		if m.updateCh != nil {
+			close(m.updateCh)
+		}
+	})
+}
+
+func (m *ClaudeManager) processUpdates() {
+	defer func() {
+		if m.updateDone != nil {
+			close(m.updateDone)
+		}
+	}()
+
+	for update := range m.updateCh {
+		m.mu.Lock()
+		callback := m.onTextDelta
+		m.mu.Unlock()
+
+		if callback == nil {
+			continue
+		}
+		if err := callback(update.text, update.sequence); err != nil {
+			m.handleError(fmt.Errorf("failed to send text delta: %w", err))
+		}
+	}
 }

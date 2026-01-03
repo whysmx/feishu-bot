@@ -29,6 +29,8 @@ type MessageHandler struct {
 	feishuClient        *client.FeishuClient // 添加飞书客户端
 	recentMessageIDs    map[string]time.Time
 	recentMessageMu     sync.Mutex
+	claudeSessions      map[string]string
+	claudeSessionMu     sync.Mutex
 }
 
 // NewMessageHandler 创建消息处理器
@@ -45,11 +47,13 @@ func NewMessageHandler(
 		feishuClient:        feishuClient,
 		logger:              log.New(log.Writer(), "[MessageHandler] ", log.LstdFlags),
 		recentMessageIDs:    make(map[string]time.Time),
+		claudeSessions:      make(map[string]string),
 	}
 }
 
 // HandleP2PMessage 处理单聊消息
 func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	appendP2PTrace(event, "handler_enter")
 	mh.logger.Printf("Received P2P message: %s", larkcore.Prettify(event))
 	_ = os.WriteFile("/tmp/feishu-last-p2p-event.json", []byte(larkcore.Prettify(event)), 0644)
 
@@ -95,6 +99,59 @@ func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2
 	receiveIDType := "open_id"
 	mh.logger.Printf("✅✅✅ P2P MODE: Using open_id=%s", openID) // 明确的标记
 	return mh.processMessage(openID, userID, receiveID, receiveIDType, content)
+}
+
+func appendP2PTrace(event *larkim.P2MessageReceiveV1, tag string) {
+	eventID := ""
+	messageID := ""
+	chatType := ""
+	openID := ""
+	if event != nil && event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID = event.EventV2Base.Header.EventID
+	}
+	if event != nil && event.Event != nil && event.Event.Message != nil {
+		if event.Event.Message.MessageId != nil {
+			messageID = *event.Event.Message.MessageId
+		}
+		if event.Event.Message.ChatType != nil {
+			chatType = *event.Event.Message.ChatType
+		}
+	}
+	if event != nil && event.Event != nil && event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.OpenId != nil {
+		openID = *event.Event.Sender.SenderId.OpenId
+	}
+	line := fmt.Sprintf("%s pid=%d tag=%s event_id=%s message_id=%s chat_type=%s open_id=%s\n",
+		time.Now().Format(time.RFC3339), os.Getpid(), tag, eventID, messageID, chatType, openID)
+	writeTraceLine(line)
+}
+
+func writeTraceLine(line string) {
+	file, err := os.OpenFile("/tmp/feishu-event-trace.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		_, _ = file.WriteString(line)
+		_ = file.Close()
+		return
+	}
+	_ = os.WriteFile("/tmp/feishu-event-trace.err", []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
+	_ = os.WriteFile("/tmp/feishu-event-trace.log", []byte(line), 0644)
+}
+
+func (mh *MessageHandler) getClaudeSession(openID string) string {
+	if openID == "" {
+		return ""
+	}
+	mh.claudeSessionMu.Lock()
+	defer mh.claudeSessionMu.Unlock()
+	return mh.claudeSessions[openID]
+}
+
+func (mh *MessageHandler) setClaudeSession(openID, sessionID string) {
+	if openID == "" || sessionID == "" {
+		return
+	}
+	mh.claudeSessionMu.Lock()
+	mh.claudeSessions[openID] = sessionID
+	mh.claudeSessionMu.Unlock()
 }
 
 func (mh *MessageHandler) shouldIgnoreMessage(event *larkim.P2MessageReceiveV1) bool {
@@ -372,12 +429,16 @@ func (mh *MessageHandler) handleStreamingChat(openID, userID, receiveID, receive
 
 	// 创建 Claude 流式对话处理器
 	claudeHandler := claude.NewHandler()
+	resumeSessionID := mh.getClaudeSession(openID)
 
 	// 处理消息（会创建卡片并流式更新）
 	ctx := context.Background()
-	if err := claudeHandler.HandleMessage(ctx, token, receiveID, receiveIDType, question); err != nil {
+	if err := claudeHandler.HandleMessage(ctx, token, receiveID, receiveIDType, question, resumeSessionID); err != nil {
 		mh.logger.Printf("Failed to handle streaming chat: %v", err)
 		return mh.sendTextMessage(openID, "❌ 对话处理失败: "+err.Error())
+	}
+	if sessionID := claudeHandler.SessionID(); sessionID != "" {
+		mh.setClaudeSession(openID, sessionID)
 	}
 
 	mh.logger.Printf("Streaming chat initiated successfully for user %s", userID)

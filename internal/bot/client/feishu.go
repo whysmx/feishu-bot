@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -172,6 +174,11 @@ func (fc *FeishuClient) SendTextMessage(openID, text string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal text content: %w", err)
 	}
+
+	token, err := fc.GetTenantAccessToken()
+	if err != nil {
+		return err
+	}
 	
 	resp, err := fc.client.Im.Message.Create(context.Background(), larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType("open_id").
@@ -180,7 +187,7 @@ func (fc *FeishuClient) SendTextMessage(openID, text string) error {
 			ReceiveId(openID).
 			Content(string(content)).
 			Build()).
-		Build())
+		Build(), larkcore.WithTenantAccessToken(token))
 
 	if err != nil {
 		return err
@@ -209,6 +216,11 @@ func (fc *FeishuClient) sendCard(openID string, card *callback.Card) error {
 		return err
 	}
 
+	token, err := fc.GetTenantAccessToken()
+	if err != nil {
+		return err
+	}
+
 	resp, err := fc.client.Im.Message.Create(context.Background(), larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType("open_id").
 		Body(larkim.NewCreateMessageReqBodyBuilder().
@@ -216,7 +228,7 @@ func (fc *FeishuClient) sendCard(openID string, card *callback.Card) error {
 			ReceiveId(openID).
 			Content(string(content)).
 			Build()).
-		Build())
+		Build(), larkcore.WithTenantAccessToken(token))
 
 	if err != nil {
 		return err
@@ -254,11 +266,13 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 	// 先尝试读锁检查缓存
 	fc.tokenMutex.RLock()
 	if fc.tenantAccessToken != "" && time.Now().Before(fc.tokenExpireTime) {
+		log.Printf("[FeishuClient] tenant token cache hit: expire_at=%s now=%s", fc.tokenExpireTime.Format(time.RFC3339), time.Now().Format(time.RFC3339))
 		token := fc.tenantAccessToken
 		fc.tokenMutex.RUnlock()
 		return token, nil
 	}
 	fc.tokenMutex.RUnlock()
+	log.Printf("[FeishuClient] tenant token cache miss: token_empty=%t expire_at=%s now=%s", fc.tenantAccessToken == "", fc.tokenExpireTime.Format(time.RFC3339), time.Now().Format(time.RFC3339))
 
 	// 缓存失效或不存在，获取新 token
 	fc.tokenMutex.Lock()
@@ -266,6 +280,7 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 
 	// 双重检查，防止并发获取
 	if fc.tenantAccessToken != "" && time.Now().Before(fc.tokenExpireTime) {
+		log.Printf("[FeishuClient] tenant token cache hit (double-check): expire_at=%s now=%s", fc.tokenExpireTime.Format(time.RFC3339), time.Now().Format(time.RFC3339))
 		return fc.tenantAccessToken, nil
 	}
 
@@ -285,6 +300,7 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 		AppID:     fc.config.AppID,
 		AppSecret: fc.config.AppSecret,
 	}
+	log.Printf("[FeishuClient] tenant token request: app_id=%s app_secret=%s at=%s", fc.config.AppID, fc.config.AppSecret, time.Now().Format(time.RFC3339))
 
 	jsonData, err := json.Marshal(reqData)
 	if err != nil {
@@ -300,6 +316,7 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 
+	start := time.Now()
 	resp, err := fc.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
@@ -313,12 +330,15 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 
 	var result tokenResp
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("[FeishuClient] tenant token response parse failed: http=%d cost_ms=%d body=%s", resp.StatusCode, time.Since(start).Milliseconds(), string(body))
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if result.Code != 0 {
+		log.Printf("[FeishuClient] tenant token response error: http=%d cost_ms=%d code=%d body=%s", resp.StatusCode, time.Since(start).Milliseconds(), result.Code, string(body))
 		return "", fmt.Errorf("API error: code=%d", result.Code)
 	}
+	log.Printf("[FeishuClient] tenant token response: http=%d cost_ms=%d code=%d expire_s=%d", resp.StatusCode, time.Since(start).Milliseconds(), result.Code, result.Expire)
 
 	// 缓存 token（提前 5 分钟过期）
 	fc.tenantAccessToken = result.TenantAccessToken

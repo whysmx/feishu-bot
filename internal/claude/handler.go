@@ -10,6 +10,7 @@ import (
 // Handler 流式对话处理器
 type Handler struct {
 	claudeManager *ClaudeManager
+	lastSessionID string
 }
 
 // NewHandler 创建处理器
@@ -18,7 +19,7 @@ func NewHandler() *Handler {
 }
 
 // HandleMessage 处理用户消息并流式返回 AI 回复
-func (h *Handler) HandleMessage(ctx context.Context, token, receiveID, receiveIDType, userMessage string) error {
+func (h *Handler) HandleMessage(ctx context.Context, token, receiveID, receiveIDType, userMessage, resumeSessionID string) error {
 	log.Printf("[HandleMessage] Processing message receive_id=%s type=%s", receiveID, receiveIDType)
 
 	// Step 1: 创建流式卡片
@@ -64,18 +65,27 @@ func (h *Handler) HandleMessage(ctx context.Context, token, receiveID, receiveID
 			log.Printf("[HandleMessage] Panic recovered: %v", r)
 		}
 	}()
-	if err := h.claudeManager.Start(ctx, userMessage); err != nil {
+	if err := h.claudeManager.Start(ctx, userMessage, resumeSessionID); err != nil {
 		return fmt.Errorf("failed to start claude: %w", err)
 	}
 	log.Printf("[HandleMessage] Claude CLI started successfully")
 
 	// Step 4: 等待完成
+	if err := h.claudeManager.WaitForOutput(ctx); err != nil {
+		log.Printf("Claude output wait error: %v", err)
+	}
 	if err := h.claudeManager.WaitForExit(); err != nil {
 		log.Printf("Claude exited with error: %v", err)
 	}
 
+	h.lastSessionID = h.claudeManager.GetSessionID()
+
 	log.Printf("[HandleMessage] Message processing completed")
 	return nil
+}
+
+func (h *Handler) SessionID() string {
+	return h.lastSessionID
 }
 
 // ExampleMain 示例使用
@@ -94,7 +104,7 @@ func ExampleMain() {
 	userMessage := "Hello! Please say 'Hi there!' and nothing else."
 
 	ctx := context.Background()
-	if err := handler.HandleMessage(ctx, token, receiveID, "chat_id", userMessage); err != nil {
+	if err := handler.HandleMessage(ctx, token, receiveID, "chat_id", userMessage, ""); err != nil {
 		log.Printf("Failed to handle message: %v", err)
 	}
 }
