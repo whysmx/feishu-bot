@@ -352,3 +352,77 @@ func httpMaxBytesReader(r io.Reader, maxBytes int64) ([]byte, error) {
 	limited := io.LimitReader(r, maxBytes)
 	return io.ReadAll(limited)
 }
+
+// SendMessage 发送消息（支持多种 receive_id_type）
+func (fc *FeishuClient) SendMessage(receiveID, receiveIDType, content string) error {
+	// 按照飞书文本消息格式要求，内容必须是 JSON 字符串
+	textContent := map[string]string{"text": content}
+	jsonContent, err := json.Marshal(textContent)
+	if err != nil {
+		return fmt.Errorf("failed to marshal text content: %w", err)
+	}
+
+	token, err := fc.GetTenantAccessToken()
+	if err != nil {
+		return err
+	}
+
+	// 根据不同的 receive_id_type 构建
+	resp, err := fc.client.Im.Message.Create(context.Background(), larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(receiveIDType).
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			MsgType("text").
+			ReceiveId(receiveID).
+			Content(string(jsonContent)).
+			Build()).
+		Build(), larkcore.WithTenantAccessToken(token))
+
+	if err != nil {
+		return fmt.Errorf("failed to create message: %w", err)
+	}
+
+	if !resp.Success() {
+		return &FeishuError{
+			Code:      resp.Code,
+			Message:   resp.Msg,
+			RequestID: resp.RequestId(),
+		}
+	}
+
+	log.Printf("[FeishuClient] Message sent: receive_id=%s receive_id_type=%s len=%d msg_id=%s",
+		receiveID, receiveIDType, len(content), *resp.Data.MessageId)
+
+	return nil
+}
+
+// GetChatName 获取群聊名称
+func (fc *FeishuClient) GetChatName(chatID string) (string, error) {
+	token, err := fc.GetTenantAccessToken()
+	if err != nil {
+		return "", err
+	}
+
+	// 调用飞书 API 获取群聊信息
+	resp, err := fc.client.Im.Chat.Get(context.Background(), larkim.NewGetChatReqBuilder().
+		ChatId(chatID).
+		Build(), larkcore.WithTenantAccessToken(token))
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get chat info: %w", err)
+	}
+
+	if !resp.Success() {
+		return "", &FeishuError{
+			Code:      resp.Code,
+			Message:   resp.Msg,
+			RequestID: resp.RequestId(),
+		}
+	}
+
+	// 返回群聊名称
+	if resp.Data != nil && resp.Data.Name != nil {
+		return *resp.Data.Name, nil
+	}
+
+	return "", fmt.Errorf("chat name is empty")
+}

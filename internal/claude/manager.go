@@ -49,10 +49,12 @@ type ClaudeManager struct {
 	currentText   strings.Builder
 	textSequence  int
 	lastMessageID string
+	config        ClaudeConfig  // 保存配置
 	mu            sync.Mutex
 	onTextDelta   func(text string, sequence int) error
 	onComplete    func(finalText string) error
 	onError       func(err error)
+	pendingTool   *pendingToolCall // 当前待执行的工具
 }
 
 // ClaudeConfig Claude CLI 配置
@@ -68,7 +70,9 @@ type textUpdate struct {
 
 // NewClaudeManager 创建 Claude 管理器
 func NewClaudeManager(config ClaudeConfig) *ClaudeManager {
-	return &ClaudeManager{}
+	return &ClaudeManager{
+		config: config,
+	}
 }
 
 // SetTextDeltaCallback 设置文本增量回调
@@ -131,7 +135,10 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage, resumeSessionID 
 	)
 
 	// 设置工作目录为项目目录
-	// m.cmd.Dir = config.ProjectDir
+	if m.config.ProjectDir != "" {
+		m.cmd.Dir = m.config.ProjectDir
+		log.Printf("[ClaudeManager] Working directory set to: %s", m.config.ProjectDir)
+	}
 
 	// 创建管道
 	stdin, err := m.cmd.StdinPipe()
@@ -298,9 +305,21 @@ func (m *ClaudeManager) handleStreamEvent(event StreamEvent) {
 		log.Printf("[ClaudeManager] message_start: message_id=%s last_message_id=%s prev_seq=%d new_seq=%d", messageID, prevMessageID, prevSeq, m.textSequence)
 		m.mu.Unlock()
 
+	case "content_block_start":
+		// 检测工具调用
+		if contentBlock, ok := event.Event["content_block"].(map[string]interface{}); ok {
+			if blockType, ok := contentBlock["type"].(string); ok && blockType == "tool_use" {
+				m.handleToolUseStart(contentBlock)
+			}
+		}
+
 	case "content_block_delta":
-		// 文本增量事件
-		m.handleTextDelta(event)
+		// 文本增量事件或工具输入增量
+		m.handleContentBlockDelta(event)
+
+	case "content_block_stop":
+		// 内容块结束（可能是工具调用结束）
+		m.handleContentBlockStop(event)
 
 	case "message_stop":
 		// 消息结束
@@ -411,6 +430,115 @@ func (m *ClaudeManager) handleTextDelta(event StreamEvent) {
 	// 调用回调
 	if callback != nil {
 		m.enqueueUpdate(fullText, sequence)
+	}
+}
+
+// handleContentBlockDelta 处理 content_block_delta 事件（文本或工具输入）
+func (m *ClaudeManager) handleContentBlockDelta(event StreamEvent) {
+	deltaData, ok := event.Event["delta"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	deltaType, ok := deltaData["type"].(string)
+	if !ok {
+		return
+	}
+
+	switch deltaType {
+	case "text_delta":
+		// 文本增量
+		m.handleTextDelta(event)
+	case "input_json_delta":
+		// 工具输入增量（暂不处理，因为我们在 content_block_stop 时执行工具）
+		log.Printf("[ClaudeManager] Tool input delta received")
+	}
+}
+
+// handleToolUseStart 处理工具调用开始
+func (m *ClaudeManager) handleToolUseStart(contentBlock map[string]interface{}) {
+	toolName, _ := contentBlock["name"].(string)
+	toolID, _ := contentBlock["id"].(string)
+	log.Printf("[ClaudeManager] Tool use detected: name=%s id=%s", toolName, toolID)
+
+	// 保存工具调用信息，等待 content_block_stop 时执行
+	m.mu.Lock()
+	m.pendingTool = &pendingToolCall{
+		name: toolName,
+		id:   toolID,
+	}
+	m.mu.Unlock()
+}
+
+// pendingToolCall 待执行的工具调用
+type pendingToolCall struct {
+	name     string
+	id       string
+	inputJSON string
+}
+
+// handleContentBlockStop 处理内容块结束（执行工具）
+func (m *ClaudeManager) handleContentBlockStop(event StreamEvent) {
+	m.mu.Lock()
+	tool := m.pendingTool
+	m.mu.Unlock()
+
+	if tool == nil {
+		return
+	}
+
+	// 从 assistant 消息中获取工具输入
+	// 需要从最近的 assistant 消息中提取完整的 input
+	log.Printf("[ClaudeManager] Content block stop, checking for tool execution: tool_name=%s", tool.name)
+
+	// 等待一小段时间让完整的 input JSON 传输完成
+	time.Sleep(100 * time.Millisecond)
+
+	// 执行工具（简化版：只支持 Bash 工具）
+	if tool.name == "Bash" {
+		m.executeBashTool(tool)
+	} else {
+		log.Printf("[ClaudeManager] Unsupported tool: %s", tool.name)
+		m.markToolCompleted(tool.id, `{"error": "unsupported tool"}`)
+	}
+
+	// 清除待执行工具
+	m.mu.Lock()
+	m.pendingTool = nil
+	m.mu.Unlock()
+}
+
+// executeBashTool 执行 Bash 工具
+func (m *ClaudeManager) executeBashTool(tool *pendingToolCall) {
+	log.Printf("[ClaudeManager] Executing Bash tool...")
+
+	// TODO: 从 assistant 消息中解析工具输入
+	// 简化版：假设工具输入已经通过某种方式获取
+	// 正确的做法是从 assistant 消息的 input 字段解析
+
+	// 临时方案：返回一个占位符结果
+	result := `{"output": "Tool execution not yet implemented"}`
+	m.markToolCompleted(tool.id, result)
+}
+
+// markToolCompleted 标记工具完成并将结果返回给 Claude
+func (m *ClaudeManager) markToolCompleted(toolID, result string) {
+	log.Printf("[ClaudeManager] Tool completed: id=%s result_len=%d", toolID, len(result))
+
+	// 构造工具结果响应并发送给 Claude
+	// 格式：<tool_result>|<json>|<tool_id>
+	response := fmt.Sprintf("<tool_result>|%s|%s\n", result, toolID)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.stdin != nil && m.cmd != nil && m.cmd.Process != nil {
+		log.Printf("[ClaudeManager] Sending tool result to Claude: %d bytes", len(response))
+		if _, err := fmt.Fprint(m.stdin, response); err != nil {
+			log.Printf("[ClaudeManager] Failed to send tool result: %v", err)
+		}
+	} else {
+		log.Printf("[ClaudeManager] Cannot send tool result: stdin or process not available")
 	}
 }
 

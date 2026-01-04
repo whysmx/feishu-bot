@@ -6,6 +6,7 @@ import (
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/bot/handlers"
 	"feishu-bot/internal/notification"
+	"feishu-bot/internal/project"
 	"feishu-bot/internal/session"
 	"fmt"
 	"log"
@@ -45,6 +46,7 @@ func main() {
 	log.Printf("Using FEISHU_APP_ID=%s FEISHU_APP_SECRET=%s", appID, appSecret)
 
 	sessionStorageFile := getEnv("SESSION_STORAGE_FILE", "data/sessions.json")
+	projectConfigPath := getEnv("PROJECT_CONFIG_FILE", "~/.feishu-bot/projects.json")
 	logLevel := getEnv("LOG_LEVEL", "info")
 	larkLogLevel := larkcore.LogLevelInfo
 	if logLevel == "debug" {
@@ -65,6 +67,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize session manager: %v", err)
 	}
+
+	// 初始化项目配置管理器
+	projectManager, err := project.NewManager(projectConfigPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize project manager: %v", err)
+	}
+	log.Printf("Project manager initialized: config=%s", projectConfigPath)
 
 	// 初始化飞书客户端
 	feishuClient := client.NewFeishuClient(client.FeishuConfig{
@@ -88,8 +97,8 @@ func main() {
 	// 初始化通知发送器
 	notificationSender := notification.NewFeishuNotificationSender(feishuClient)
 
-	// 初始化消息处理器（暂时传入nil作为命令执行器）
-	messageHandler := handlers.NewMessageHandler(sessionManager, nil, notificationSender, feishuClient)
+	// 初始化消息处理器（传入 projectManager）
+	messageHandler := handlers.NewMessageHandler(sessionManager, nil, notificationSender, feishuClient, projectManager)
 
 	// 初始化卡片交互处理器
 	cardHandler := handlers.NewCardActionHandler(sessionManager, nil, notificationSender)

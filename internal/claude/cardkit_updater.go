@@ -35,8 +35,8 @@ func NewCardKitUpdater(token, cardID, elementID, uuid string) *CardKitUpdater {
 		elementID:   elementID,
 		uuid:        uuid,
 		client:      &http.Client{Timeout: 10 * time.Second},
-		rateLimiter: time.NewTicker(100 * time.Millisecond), // 限制 10 QPS
-		currentSeq:  0,                                      // 默认初始值
+		rateLimiter: time.NewTicker(500 * time.Millisecond), // 限制 2 QPS (降低 API 消耗)
+		currentSeq:  0,                                        // 默认初始值
 	}
 }
 
