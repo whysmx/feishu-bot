@@ -101,6 +101,100 @@ func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2
 	return mh.processMessage(openID, userID, receiveID, receiveIDType, content)
 }
 
+// HandleGroupMessage 处理群聊消息
+func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	mh.logger.Printf("Received GROUP message: %s", larkcore.Prettify(event))
+	_ = os.WriteFile("/tmp/feishu-last-group-event.json", []byte(larkcore.Prettify(event)), 0644)
+
+	// 安全检查防止 nil 指针
+	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.ChatId == nil {
+		mh.logger.Printf("Invalid group event structure: missing required fields")
+		return fmt.Errorf("invalid group event structure")
+	}
+
+	if mh.shouldIgnoreMessage(event) {
+		return nil
+	}
+
+	// 获取消息内容
+	content, err := mh.extractTextContent(event.Event.Message)
+	if err != nil {
+		mh.logger.Printf("Failed to extract group message content: %v", err)
+		return err
+	}
+
+	chatID := *event.Event.Message.ChatId
+	messageID := ""
+	if event.Event.Message.MessageId != nil {
+		messageID = *event.Event.Message.MessageId
+	}
+	mh.logger.Printf("[DEBUG] GROUP content extracted: message_id=%s chat_id=%s len=%d content=%q", messageID, chatID, len(content), content)
+
+	// 获取发送者信息（用于日志）
+	openID := ""
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.OpenId != nil {
+		openID = *event.Event.Sender.SenderId.OpenId
+	}
+
+	var userID string
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
+		if event.Event.Sender.SenderId.UnionId != nil {
+			userID = *event.Event.Sender.SenderId.UnionId
+		} else if event.Event.Sender.SenderId.OpenId != nil {
+			userID = *event.Event.Sender.SenderId.OpenId
+		}
+	}
+
+	// 群聊场景使用固定的全局会话ID和chat_id
+	groupSessionID := "global_group_session"
+	receiveID := chatID
+	receiveIDType := "chat_id"
+	mh.logger.Printf("✅✅✅ GROUP MODE: Using chat_id=%s global_session=%s sender=%s", chatID, groupSessionID, openID)
+
+	return mh.processGroupMessage(groupSessionID, userID, receiveID, receiveIDType, content)
+}
+
+// processGroupMessage 处理群聊消息（使用全局共享会话）
+func (mh *MessageHandler) processGroupMessage(sessionID, userID, receiveID, receiveIDType, content string) error {
+	mh.logger.Printf("[DEBUG] processGroupMessage: session_id=%s user_id=%s receive_id=%s receive_id_type=%s len=%d", sessionID, userID, receiveID, receiveIDType, len(content))
+
+	// 获取 tenant_access_token
+	token, err := mh.feishuClient.GetTenantAccessToken()
+	if err != nil {
+		mh.logger.Printf("Failed to get tenant access token: %v", err)
+		return fmt.Errorf("failed to get tenant access token: %w", err)
+	}
+
+	// 验证 receive_id 不为空
+	if receiveID == "" {
+		mh.logger.Printf("ERROR: receiveID is empty! receiveIDType=%s", receiveIDType)
+		return fmt.Errorf("cannot send card: missing valid receive ID")
+	}
+
+	// 创建 Claude 流式对话处理器
+	claudeHandler := claude.NewHandler()
+
+	// 群聊使用固定的全局会话ID，实现所有群聊共享会话
+	resumeSessionID := mh.getClaudeSession(sessionID)
+	mh.logger.Printf("[DEBUG] Group chat using global session: %s (resume=%s)", sessionID, resumeSessionID)
+
+	// 处理消息（会创建卡片并流式更新）
+	ctx := context.Background()
+	if err := claudeHandler.HandleMessage(ctx, token, receiveID, receiveIDType, content, resumeSessionID); err != nil {
+		mh.logger.Printf("Failed to handle group streaming chat: %v", err)
+		return fmt.Errorf("failed to handle group streaming chat: %w", err)
+	}
+
+	// 保存全局会话ID
+	if newSessionID := claudeHandler.SessionID(); newSessionID != "" {
+		mh.setClaudeSession(sessionID, newSessionID)
+		mh.logger.Printf("[DEBUG] Group chat session saved: %s -> %s", sessionID, newSessionID)
+	}
+
+	mh.logger.Printf("Group chat streaming initiated successfully for session %s", sessionID)
+	return nil
+}
+
 func appendP2PTrace(event *larkim.P2MessageReceiveV1, tag string) {
 	eventID := ""
 	messageID := ""

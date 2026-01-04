@@ -158,9 +158,17 @@ func main() {
 
 				chatType = *ev.Event.Message.ChatType
 				if chatType == "p2p" {
+					// 处理单聊消息
 					if err := messageHandler.HandleP2PMessage(context.Background(), ev); err != nil {
 						log.Printf("Failed to handle P2P message: %v", err)
 					}
+				} else if chatType == "group" || chatType == "private" {
+					// 处理群聊消息
+					if err := messageHandler.HandleGroupMessage(context.Background(), ev); err != nil {
+						log.Printf("Failed to handle GROUP message: %v", err)
+					}
+				} else {
+					log.Printf("[OnP2MessageReceiveV1] Unsupported chat_type=%s", chatType)
 				}
 			}(event)
 
