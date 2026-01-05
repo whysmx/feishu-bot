@@ -4,7 +4,6 @@ import (
 	"context"
 	"feishu-bot/internal/command"
 	"feishu-bot/internal/notification"
-	"feishu-bot/internal/session"
 	"fmt"
 	"log"
 
@@ -14,7 +13,6 @@ import (
 
 // CardActionHandler 卡片交互处理器
 type CardActionHandler struct {
-	sessionManager     session.SessionManager
 	commandExecutor    command.CommandExecutor
 	notificationSender notification.NotificationSender
 	logger             *log.Logger
@@ -22,12 +20,10 @@ type CardActionHandler struct {
 
 // NewCardActionHandler 创建卡片交互处理器
 func NewCardActionHandler(
-	sessionManager session.SessionManager,
 	commandExecutor command.CommandExecutor,
 	notificationSender notification.NotificationSender,
 ) *CardActionHandler {
 	return &CardActionHandler{
-		sessionManager:     sessionManager,
 		commandExecutor:    commandExecutor,
 		notificationSender: notificationSender,
 		logger:             log.New(log.Writer(), "[CardActionHandler] ", log.LstdFlags),
@@ -106,53 +102,14 @@ func (cah *CardActionHandler) handleSendCommand(event *callback.CardActionTrigge
 
 // handleContinueWork 处理继续工作
 func (cah *CardActionHandler) handleContinueWork(openID, userID, token string) (*callback.CardActionTriggerResponse, error) {
-	// 验证会话
-	sess, err := cah.sessionManager.ValidateSession(token)
-	if err != nil {
-		return cah.createErrorResponse("会话无效或已过期"), nil
-	}
-
-	// 发送提示消息
-	message := fmt.Sprintf("会话 %s 已准备就绪，请发送命令格式: %s: <您的命令>", sess.Description, token)
-	
-	if textSender, ok := cah.notificationSender.(interface {
-		SendTextNotification(openID, message string) error
-	}); ok {
-		textSender.SendTextNotification(openID, message)
-	}
-
-	return cah.createSuccessResponse("✅ 会话已激活，请发送命令"), nil
+	// 会话管理功能已移除
+	return cah.createErrorResponse("会话管理功能已移除"), nil
 }
 
 // handleViewStatus 处理查看状态
 func (cah *CardActionHandler) handleViewStatus(openID, userID, token string) (*callback.CardActionTriggerResponse, error) {
-	sess, err := cah.sessionManager.GetSession(token)
-	if err != nil {
-		return cah.createErrorResponse("获取会话信息失败"), nil
-	}
-
-	statusMessage := fmt.Sprintf(`📊 **会话状态信息**
-
-**令牌:** %s
-**状态:** %s
-**描述:** %s
-**工作目录:** %s
-**创建时间:** %s
-**过期时间:** %s`,
-		sess.Token,
-		sess.Status,
-		sess.Description,
-		sess.WorkingDir,
-		sess.CreatedAt.Format("2006-01-02 15:04:05"),
-		sess.ExpiresAt.Format("2006-01-02 15:04:05"))
-
-	if textSender, ok := cah.notificationSender.(interface {
-		SendTextNotification(openID, message string) error
-	}); ok {
-		textSender.SendTextNotification(openID, statusMessage)
-	}
-
-	return cah.createSuccessResponse("✅ 状态信息已发送"), nil
+	// 会话管理功能已移除
+	return cah.createErrorResponse("会话管理功能已移除"), nil
 }
 
 // handleViewSession 处理查看会话
@@ -189,12 +146,8 @@ func (cah *CardActionHandler) handleViewOptions(openID, userID, token string) (*
 
 // handleEndSession 处理结束会话
 func (cah *CardActionHandler) handleEndSession(openID, userID, token string) (*callback.CardActionTriggerResponse, error) {
-	err := cah.sessionManager.DeleteSession(token)
-	if err != nil {
-		return cah.createErrorResponse("结束会话失败"), nil
-	}
-
-	return cah.createSuccessResponse("✅ 会话已结束"), nil
+	// 会话管理功能已移除
+	return cah.createErrorResponse("会话管理功能已移除"), nil
 }
 
 // handleRetryCommand 处理重试命令

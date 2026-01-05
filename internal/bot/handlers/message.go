@@ -23,7 +23,6 @@ import (
 
 // MessageHandler 消息处理器
 type MessageHandler struct {
-	sessionManager      session.SessionManager
 	commandExecutor     command.CommandExecutor
 	notificationSender  notification.NotificationSender
 	logger              *log.Logger
@@ -37,14 +36,12 @@ type MessageHandler struct {
 
 // NewMessageHandler 创建消息处理器
 func NewMessageHandler(
-	sessionManager session.SessionManager,
 	commandExecutor command.CommandExecutor,
 	notificationSender notification.NotificationSender,
 	feishuClient *client.FeishuClient,
 	projectManager *project.Manager,
 ) *MessageHandler {
 	return &MessageHandler{
-		sessionManager:      sessionManager,
 		commandExecutor:     commandExecutor,
 		notificationSender:  notificationSender,
 		feishuClient:        feishuClient,
@@ -367,66 +364,7 @@ func (mh *MessageHandler) processMessage(openID, userID, receiveID, receiveIDTyp
 	return mh.handleStreamingChat(openID, userID, receiveID, receiveIDType, content)
 }
 
-// handleSessionsCommand 处理会话列表命令
-func (mh *MessageHandler) handleSessionsCommand(openID, userID string) error {
-	sessions, err := mh.sessionManager.ListSessions(userID)
-	if err != nil {
-		mh.logger.Printf("Failed to list sessions for user %s: %v", userID, err)
-		return mh.sendTextMessage(openID, "❌ 获取会话列表失败，请稍后重试")
-	}
-
-	if sessions.Total == 0 {
-		return mh.sendTextMessage(openID, "📋 您当前没有活跃的会话")
-	}
-
-	// 构建会话列表消息
-	var message strings.Builder
-	message.WriteString("📋 您的活跃会话列表：\n\n")
-
-	for i, sess := range sessions.Sessions {
-		statusEmoji := mh.getStatusEmoji(sess.Status)
-		message.WriteString(
-			fmt.Sprintf("%d. %s %s\n   令牌: %s\n   项目: %s\n   状态: %s\n\n",
-				i+1, statusEmoji, sess.Description, sess.Token,
-				sess.WorkingDir, sess.Status))
-	}
-
-	message.WriteString(fmt.Sprintf("总计: %d 个会话 | 活跃: %d 个",
-		sessions.Total, sessions.ActiveCount))
-
-	return mh.sendTextMessage(openID, message.String())
-}
-
-// handleRemoteCommand 处理远程命令
-func (mh *MessageHandler) handleRemoteCommand(openID, userID, content string) error {
-	// 解析命令
-	token, command, err := mh.parseRemoteCommand(content)
-	if err != nil {
-		return mh.sendTextMessage(openID, "❌ 命令格式错误，请使用: <令牌>: <命令>")
-	}
-
-	// 检查命令执行器是否可用
-	if mh.commandExecutor == nil {
-		return mh.sendTextMessage(openID, "⚠️ 命令执行功能暂未启用")
-	}
-
-	// 暂时使用mock实现
-	mh.logger.Printf("Mock: Would execute command %s for token %s", command, token)
-
-	// 模拟成功响应
-	resultMessage := fmt.Sprintf("✅ 命令执行成功\n\n令牌: %s\n命令: %s\n方法: mock\n耗时: 100ms",
-		token, command)
-
-	return mh.sendTextMessage(openID, resultMessage)
-}
-
 // isRemoteCommand 检查是否是远程命令
-func (mh *MessageHandler) isRemoteCommand(content string) bool {
-	// 匹配格式: TOKEN: command
-	pattern := `^[A-Z0-9]{8}:\s*.+`
-	matched, _ := regexp.MatchString(pattern, content)
-	return matched
-}
 
 // parseRemoteCommand 解析远程命令
 func (mh *MessageHandler) parseRemoteCommand(content string) (token, command string, err error) {
