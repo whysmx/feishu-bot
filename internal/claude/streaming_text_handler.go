@@ -43,8 +43,8 @@ type StreamingTextHandler struct {
 func NewStreamingTextHandler(feishuClient *client.FeishuClient) *StreamingTextHandler {
 	return &StreamingTextHandler{
 		feishuClient:  feishuClient,
-		idleTimeout:   5 * time.Second,  // 5秒无新数据则发送（优化：减少API调用次数）
-		maxDuration:   15 * time.Second, // 15秒连续输出后强制分段（配合idleTimeout调整）
+		idleTimeout:   8 * time.Second,  // 8秒无新数据则发送（进一步优化：减少API调用）
+		maxDuration:   20 * time.Second, // 20秒连续输出后强制分段（配合idleTimeout调整）
 		maxBufferSize: 30000,            // 最大缓冲区30000字符（防止超过飞书150KB限制）
 		logger:        log.New(os.Stdout, "[StreamingTextHandler] ", log.LstdFlags),
 		stopTimers:    make(chan struct{}),
