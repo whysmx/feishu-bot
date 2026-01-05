@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/claude"
+	"feishu-bot/internal/config"
 	"feishu-bot/internal/utils"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -141,7 +143,7 @@ func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.
 	isMentioned := mh.isMentioned(event.Event.Message)
 	mh.logger.Printf("[DEBUG] GROUP message: chat_id=%s is_mentioned=%t content=%q", chatID, isMentioned, content)
 
-	// 如果 @机器人，直接处理对话（不支持命令）
+	// 如果 @机器人，检查是否为特殊命令
 	if isMentioned {
 		trimmedContent := strings.TrimSpace(content)
 
@@ -156,10 +158,25 @@ func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.
 
 		// 空消息，提示使用
 		if trimmedContent == "" {
-			return mh.sendTextMessage(receiveID, receiveIDType, "💡 提及机器人后输入问题即可对话")
+			return mh.sendTextMessage(receiveID, receiveIDType,
+				"💡 提及机器人后输入问题即可对话\n发送 'help' 查看命令列表")
 		}
 
-		// 处理 @机器人的对话
+		// 解析是否为特殊命令
+		cmdType, cmdArgs, isCmd := parseCommand(trimmedContent)
+		if isCmd {
+			// 处理特殊命令（不转发给 Claude）
+			switch cmdType {
+			case "ls":
+				return mh.handleLsCommand(receiveID)
+			case "bind":
+				return mh.handleBindCommand(receiveID, cmdArgs)
+			case "help":
+				return mh.handleHelpCommand(receiveID)
+			}
+		}
+
+		// 不是特殊命令，正常转发给 Claude CLI
 		return mh.processGroupMessage(groupSessionID, userID, receiveID, receiveIDType, trimmedContent)
 	}
 
@@ -184,6 +201,16 @@ func (mh *MessageHandler) processGroupMessage(sessionID, userID, receiveID, rece
 		return fmt.Errorf("cannot send card: missing valid receive ID")
 	}
 
+	// 读取绑定的项目路径
+	projectDir := ""
+	cfg, err := config.Load()
+	if err == nil {
+		projectDir = cfg.GetProjectPath(receiveID)
+		if projectDir != "" {
+			mh.logger.Printf("[DEBUG] Using bound project path: %s", projectDir)
+		}
+	}
+
 	// 创建 Claude 流式文本处理器（不使用 CardKit，节省 API 调用）
 	streamingTextHandler := claude.NewStreamingTextHandler(mh.feishuClient)
 
@@ -193,7 +220,7 @@ func (mh *MessageHandler) processGroupMessage(sessionID, userID, receiveID, rece
 
 	// 处理消息（流式分段发送，同步 CLI 输出节奏）
 	ctx := context.Background()
-	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, content, resumeSessionID, ""); err != nil {
+	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, content, resumeSessionID, projectDir); err != nil {
 		mh.logger.Printf("Failed to handle group streaming text chat: %v", err)
 		return fmt.Errorf("failed to handle group streaming text chat: %w", err)
 	}
@@ -440,4 +467,199 @@ func (mh *MessageHandler) handleStreamingChat(openID, userID, receiveID, receive
 
 	mh.logger.Printf("Streaming text chat completed successfully for user %s", userID)
 	return nil
+}
+
+// parseCommand 解析用户消息是否为特殊命令
+// 返回：命令类型、参数、是否为命令
+func parseCommand(content string) (cmdType string, args string, isCmd bool) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", "", false
+	}
+
+	// 提取第一个单词作为命令
+	parts := strings.Fields(content)
+	if len(parts) == 0 {
+		return "", "", false
+	}
+
+	command := strings.ToLower(parts[0])
+	switch command {
+	case "ls", "bind", "help":
+		args = strings.Join(parts[1:], " ")
+		return command, args, true
+	default:
+		return "", "", false
+	}
+}
+
+// handleLsCommand 处理 ls 命令 - 列出基础目录下的所有项目
+func (mh *MessageHandler) handleLsCommand(chatID string) error {
+	baseDir := getBaseDir()
+
+	// 列出目录内容
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 无法读取目录: %v", err))
+	}
+
+	// 过滤目录并编号
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+
+	// 读取当前绑定的项目路径
+	currentBinding := ""
+	cfg, err := config.Load()
+	if err == nil {
+		if path := cfg.GetProjectPath(chatID); path != "" {
+			currentBinding = path
+		}
+	}
+
+	// 构建回复消息
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("📂 基础目录: %s\n\n", baseDir))
+	builder.WriteString("可绑定项目目录：\n")
+	for i, dir := range dirs {
+		builder.WriteString(fmt.Sprintf("%d. %s\n", i+1, dir))
+	}
+	builder.WriteString(fmt.Sprintf("\n共 %d 个目录\n", len(dirs)))
+	builder.WriteString("使用命令: bind <序号>")
+
+	// 显示当前绑定
+	if currentBinding != "" {
+		builder.WriteString(fmt.Sprintf("\n\n✅ 当前绑定: %s", currentBinding))
+	}
+
+	return mh.sendTextMessage(chatID, "chat_id", builder.String())
+}
+
+// handleBindCommand 处理 bind 命令 - 绑定群聊到指定项目路径
+func (mh *MessageHandler) handleBindCommand(chatID, args string) error {
+	// 解析序号
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return mh.sendTextMessage(chatID, "chat_id",
+			"❌ 请提供项目序号\n使用命令: bind <序号>")
+	}
+
+	// 尝试解析为数字
+	index, err := strconv.Atoi(args)
+	if err != nil || index < 1 {
+		return mh.sendTextMessage(chatID, "chat_id",
+			"❌ 无效的序号，请输入数字")
+	}
+
+	// 读取项目列表
+	baseDir := getBaseDir()
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 无法读取目录: %v", err))
+	}
+
+	// 过滤并查找指定目录
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+
+	if index > len(dirs) {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 序号超出范围，最大序号: %d", len(dirs)))
+	}
+
+	// 绑定路径
+	selectedDir := dirs[index-1]
+	projectPath := baseDir + selectedDir
+
+	// 保存到配置文件
+	cfg, err := config.Load()
+	if err != nil {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 加载配置失败: %v", err))
+	}
+	if err := cfg.SetProjectPath(chatID, projectPath); err != nil {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 保存配置失败: %v", err))
+	}
+	if err := cfg.Save(); err != nil {
+		return mh.sendTextMessage(chatID, "chat_id",
+			fmt.Sprintf("❌ 保存配置文件失败: %v", err))
+	}
+
+	return mh.sendTextMessage(chatID, "chat_id",
+		fmt.Sprintf("✅ 已绑定项目路径: %s\n（配置已保存）", projectPath))
+}
+
+// handleHelpCommand 处理 help 命令 - 显示帮助信息
+func (mh *MessageHandler) handleHelpCommand(chatID string) error {
+	// 读取当前绑定的项目路径
+	currentBinding := ""
+	cfg, err := config.Load()
+	if err == nil {
+		if path := cfg.GetProjectPath(chatID); path != "" {
+			currentBinding = path
+		}
+	}
+
+	// 构建帮助信息
+	var builder strings.Builder
+	builder.WriteString(`🤖 飞书 Claude CLI 机器人命令说明
+
+特殊命令：
+• ls - 列出可绑定的项目目录
+• bind <序号> - 绑定群聊到指定项目路径
+• help - 显示此帮助信息
+
+使用示例：
+@机器人 ls
+@机器人 bind 18
+@机器人 help
+
+注意：
+- 特殊命令仅在群聊中有效
+- 绑定后配置会持久化保存
+- 其他消息将转发给 Claude 处理`)
+
+	// 显示当前绑定
+	if currentBinding != "" {
+		builder.WriteString(fmt.Sprintf("\n\n✅ 当前绑定: %s", currentBinding))
+	} else {
+		builder.WriteString("\n\n⚠️ 当前未绑定项目路径")
+	}
+
+	return mh.sendTextMessage(chatID, "chat_id", builder.String())
+}
+
+// getBaseDir 获取基础目录配置
+func getBaseDir() string {
+	// 优先从环境变量读取
+	if dir := os.Getenv("BASE_DIR"); dir != "" {
+		// 确保路径末尾有斜杠
+		if !strings.HasSuffix(dir, "/") {
+			dir = dir + "/"
+		}
+		return dir
+	}
+
+	// 从配置文件读取
+	cfg, err := config.Load()
+	if err == nil && cfg.BaseDir != "" {
+		baseDir := cfg.BaseDir
+		if !strings.HasSuffix(baseDir, "/") {
+			baseDir = baseDir + "/"
+		}
+		return baseDir
+	}
+
+	// 默认值
+	return "/Users/wen/Desktop/code/"
 }

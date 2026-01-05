@@ -36,10 +36,13 @@
 │   ├── claude/                   # Claude CLI 集成
 │   │   ├── manager.go            # CLI 进程管理
 │   │   └── streaming_text_handler.go  # 流式文本处理
+│   ├── config/                   # 配置管理
+│   │   └── chat_config.go        # 聊天配置（项目绑定）
 │   └── utils/                    # 工具函数
 │       ├── paths.go
 │       └── timeout.go
-├── configs/                      # 配置文件
+├── configs/                      # 配置文件目录
+│   └── chat_config.json          # 聊天配置（自动生成）
 ├── scripts/                      # 部署脚本
 │   ├── start-bot.sh
 │   ├── stop-bot.sh
@@ -121,6 +124,132 @@ go run cmd/bot/main.go
 2. 显示"思考中..."
 3. 逐字显示 AI 回复（打字机效果）
 
+### 特殊命令（群聊专用）
+
+在群聊中 @机器人 时，可以使用以下特殊命令（不转发给 Claude CLI）：
+
+#### 1. ls 命令 - 列出项目目录
+
+```
+@机器人 ls
+```
+
+**功能**：列出基础目录下所有可绑定的项目目录
+
+**示例输出**：
+```
+📂 基础目录: /Users/wen/Desktop/code/
+
+可绑定项目目录：
+1. 01frp
+2. 02v0.dev
+3. 18feishu
+...
+
+共 33 个目录
+使用命令: bind <序号>
+
+✅ 当前绑定: /Users/wen/Desktop/code/18feishu
+```
+
+#### 2. bind 命令 - 绑定项目路径
+
+```
+@机器人 bind <序号>
+```
+
+**功能**：将当前群聊绑定到指定项目目录，Claude CLI 会在该目录下启动
+
+**示例**：
+```
+@机器人 bind 18
+```
+
+**输出**：
+```
+✅ 已绑定项目路径: /Users/wen/Desktop/code/18feishu
+（配置已保存）
+```
+
+**说明**：
+- 绑定后，Claude CLI 会以该项目目录作为工作目录启动
+- 可以访问项目内的所有文件
+- 配置会持久化保存到 `configs/chat_config.json`
+- 机器人重启后绑定关系保持不变
+
+#### 3. help 命令 - 显示帮助
+
+```
+@机器人 help
+```
+
+**功能**：显示命令帮助信息和当前绑定状态
+
+**示例输出**：
+```
+🤖 飞书 Claude CLI 机器人命令说明
+
+特殊命令：
+• ls - 列出可绑定的项目目录
+• bind <序号> - 绑定群聊到指定项目路径
+• help - 显示此帮助信息
+
+使用示例：
+@机器人 ls
+@机器人 bind 18
+@机器人 help
+
+注意：
+- 特殊命令仅在群聊中有效
+- 绑定后配置会持久化保存
+- 其他消息将转发给 Claude 处理
+
+✅ 当前绑定: /Users/wen/Desktop/code/18feishu
+```
+
+### 配置基础目录
+
+基础目录（用于 ls 命令扫描项目）可以通过以下方式配置（优先级从高到低）：
+
+**方式 1：环境变量（推荐）**
+
+编辑 `.env` 文件：
+```bash
+BASE_DIR=/Users/wen/Desktop/code/
+```
+
+**方式 2：配置文件**
+
+编辑 `configs/chat_config.json`：
+```json
+{
+  "base_dir": "/Users/wen/Desktop/code/",
+  "project_paths": {}
+}
+```
+
+**方式 3：默认值**
+
+如果未配置，默认使用：`/Users/wen/Desktop/code/`
+
+### 配置文件说明
+
+绑定信息保存在 `configs/chat_config.json`：
+
+```json
+{
+  "base_dir": "/Users/wen/Desktop/code/",
+  "project_paths": {
+    "oc_xxxxxxxxx": "/Users/wen/Desktop/code/18feishu",
+    "oc_yyyyyyyyy": "/Users/wen/Desktop/code/other-project"
+  }
+}
+```
+
+- `base_dir`: 基础目录，用于扫描可绑定的项目
+- `project_paths`: 群聊 ID 到项目路径的映射关系
+- 配置文件已加入 `.gitignore`，不会被提交到 Git
+
 ### 示例对话
 
 ```
@@ -129,6 +258,28 @@ go run cmd/bot/main.go
 机器人: [创建卡片]
       [流式更新内容]
       在 Go 中，可以使用标准库的 net/http 包...
+```
+
+### 使用场景示例
+
+**场景 1：多项目管理**
+
+```
+# 开发团队 A 的群聊
+@机器人 bind 1    # 绑定到 project-a
+@机器人 帮我重构这个函数  # Claude 在 project-a 目录下工作
+
+# 开发团队 B 的群聊
+@机器人 bind 2    # 绑定到 project-b
+@机器人 写个单元测试  # Claude 在 project-b 目录下工作
+```
+
+**场景 2：快速查看项目**
+
+```
+@机器人 ls        # 查看所有可绑定项目
+@机器人 bind 18   # 绑定到 18feishu 项目
+@机器人 列出当前目录的文件  # Claude 访问 18feishu 项目
 ```
 
 ## 技术实现
@@ -178,6 +329,7 @@ wsClient.Start(context.Background())
 |--------|------|------|
 | `FEISHU_APP_ID` | 飞书应用 ID | `cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | `Y0psnqB52LC50Svx...` |
+| `BASE_DIR` | 基础项目目录（用于 ls 和 bind 命令） | `/Users/wen/Desktop/code/` |
 | `GROUP_REQUIRE_MENTION` | 群聊是否必须@机器人（默认 false） | `false` |
 
 ### CardKit 打字机效果
