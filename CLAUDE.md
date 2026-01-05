@@ -99,14 +99,20 @@ grep "ERROR" /tmp/feishu-bot.log
    - 启动和管理 Claude CLI 进程
    - 解析 stream-json 输出
    - 提供文本增量回调
-   - **智能批量发送优化**：100 字符或 3 秒超时触发更新
+   - **立即发送机制**：每次文本增量都触发回调
 
 2. **CardKit Updater** (`internal/claude/cardkit_updater.go`)
    - 创建卡片实体
    - 流式更新卡片内容
-   - 限流控制（100ms 间隔 = 10 QPS）
+   - 限流控制（500ms 间隔 = 2 QPS）
 
-3. **Message Handler** (`internal/bot/handlers/message.go`)
+3. **Streaming Text Handler** (`internal/claude/streaming_text_handler.go`)
+   - **基于时间的智能分段**：优化 API 调用次数
+   - 500ms 空闲超时：无新数据时发送缓冲区内容
+   - 10 秒最大持续时间：长时间输出强制分段
+   - 30000 字符缓冲上限：防止超过飞书 150KB 限制
+
+4. **Message Handler** (`internal/bot/handlers/message.go`)
    - 处理飞书消息
    - 路由用户消息到流式对话处理器
    - 集成 Claude CLI 和 CardKit
@@ -122,11 +128,16 @@ Message Handler 处理
     ↓
 Claude Handler → 创建 CardKit 卡片
     ↓
-启动 Claude CLI (cc1 命令)
+启动 Claude CLI (claude -p 命令)
     ↓
 解析 stream-json → 提取文本增量
     ↓
-CardKitUpdater 流式更新卡片（打字机效果）
+StreamingTextHandler 智能分段缓冲
+    ├─ 500ms 空闲超时
+    ├─ 10 秒持续时间
+    └─ 30000 字符缓冲上限
+    ↓
+飞书消息 API 发送（打字机效果）
 ```
 
 ## 关键技术点
@@ -157,33 +168,27 @@ cmd := exec.Command("cc1",
 2. **发送到聊天**：`POST /open-apis/im/v1/messages`
 3. **流式更新**：`PUT /open-apis/cardkit/v1/cards/{id}/elements/{id}/content`
 
-### 4. 限流控制
+### 4. 智能分段策略
 
-使用 `time.Ticker` 实现 100ms 间隔（10 QPS）：
+**StreamingTextHandler** 实现基于时间的智能分段，优化 API 调用：
 
-```go
-rateLimiter := time.NewTicker(100 * time.Millisecond)
-<-rateLimiter.C  // 等待限流
-```
-
-### 5. 批量发送优化
-
-智能批量发送策略，平衡 API 调用次数和用户体验：
-
-**策略**：
-- 累积至少 **100 字符**才发送（减少 API 调用）
-- 或距离上次发送超过 **3 秒**（保证响应性）
-- 消息结束时强制发送（确保内容完整）
+**分段条件**（满足任一即发送）：
+1. **空闲超时**：500ms 无新数据 → 发送缓冲区
+2. **持续时间**：连续输出 10 秒 → 强制分段
+3. **缓冲区上限**：累积 30000 字符 → 强制分段
+4. **消息结束**：Claude 回复完成 → 发送剩余内容
 
 **实现细节**：
-- 使用定时刷新器处理低频更新场景
-- 记录上次发送的文本长度和时间
-- 动态判断是否达到发送条件
+```go
+idleTimeout:   500 * time.Millisecond  // 空闲超时
+maxDuration:   10 * time.Second        // 最大持续时间
+maxBufferSize: 30000                   // 字符缓冲上限
+```
 
 **优化目标**：
-- 在 10 QPS 限流下降低 API 调用频率
-- 保持流式输出的流畅体验
-- 避免频繁的小批量更新
+- 减少 API 调用次数（避免每个字符都调用）
+- 保持流式输出体验（500ms 响应速度）
+- 防止超过飞书 150KB 消息大小限制
 
 ## 安全注意事项
 
