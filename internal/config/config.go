@@ -190,17 +190,10 @@ func (cm *ConfigManager) getDefaultConfig() *Config {
 	return &Config{
 		Feishu: FeishuConfig{
 			BaseDomain: "https://open.feishu.cn",
-			AppID:      "cli_a8058428d478501c",
+			AppID:      "",
 			AppSecret:  "",
 		},
-		Cards: CardsConfig{
-			StopTaskCardID:      "AAqz1Y1TvQB25",
-			RunningTaskCardID:   "AAqz1Y1p8y5Se",
-			SuccessTaskCardID:   "AAqz1Y1QyEzLF",
-			TaskCompletedCardID: "",
-			TaskWaitingCardID:   "",
-			CommandResultCardID: "",
-		},
+		Cards: CardsConfig{},
 		Webhook: WebhookConfig{
 			Port: 8080,
 			Endpoints: WebhookEndpoints{
@@ -212,7 +205,7 @@ func (cm *ConfigManager) getDefaultConfig() *Config {
 			TokenLength:            8,
 			ExpirationHours:        24,
 			CleanupIntervalMinutes: 60,
-			StorageFile:            "data/sessions.json",
+			StorageFile:            "", // 从环境变量读取，默认为空
 		},
 		Command: CommandConfig{
 			MaxLength:      1000,
@@ -232,7 +225,7 @@ func (cm *ConfigManager) getDefaultConfig() *Config {
 		},
 		Logging: LoggingConfig{
 			Level:      "info",
-			File:       "data/logs/bot.log",
+			File:       "", // 从环境变量读取，默认输出到 stdout
 			MaxSizeMB:  100,
 			MaxBackups: 5,
 		},

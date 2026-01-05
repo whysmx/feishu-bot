@@ -79,9 +79,9 @@ func main() {
 		AppID:     appID,
 		AppSecret: appSecret,
 		CardTemplates: client.CardTemplates{
-			TaskCompleted: getEnv("TASK_COMPLETED_CARD_ID", "AAqz1Y1QyEzLF"),
-			TaskWaiting:   getEnv("TASK_WAITING_CARD_ID", "AAqz1Y1p8y5Se"),
-			CommandResult: getEnv("COMMAND_RESULT_CARD_ID", "AAqz1Y1TvQB25"),
+			TaskCompleted: getEnv("TASK_COMPLETED_CARD_ID", ""),
+			TaskWaiting:   getEnv("TASK_WAITING_CARD_ID", ""),
+			CommandResult: getEnv("COMMAND_RESULT_CARD_ID", ""),
 			SessionList:   getEnv("SESSION_LIST_CARD_ID", ""),
 		},
 	})
@@ -224,7 +224,7 @@ func main() {
 					Card: &callback.Card{
 						Type: "template",
 						Data: &callback.TemplateCard{
-							TemplateID: "AAqz1Y1QyEzLF", // 使用完成状态的卡片模板
+							TemplateID: "", // 卡片功能已弃用，留空
 							TemplateVariable: map[string]interface{}{
 								"complete_time": time.Now().Format("2006-01-02 15:04:05 (UTC+8)"), // 动态完成时间
 								"notes":         notes,                                            // 用户输入的备注
