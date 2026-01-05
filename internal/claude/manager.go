@@ -55,6 +55,7 @@ type ClaudeManager struct {
 	onComplete    func(finalText string) error
 	onError       func(err error)
 	pendingTool   *pendingToolCall // 当前待执行的工具
+	lastError     error            // 记录最后一个错误
 
 	// 批量发送优化
 	lastUpdateLen int             // 上次发送时的文本长度
@@ -613,6 +614,7 @@ func (m *ClaudeManager) notifyComplete() {
 func (m *ClaudeManager) handleError(err error) {
 	m.mu.Lock()
 	callback := m.onError
+	m.lastError = err  // 记录错误
 	m.mu.Unlock()
 
 	if callback != nil {
@@ -675,11 +677,19 @@ func (m *ClaudeManager) WaitForOutput(ctx context.Context) error {
 	select {
 	case <-ch:
 		if updateDone == nil {
-			return nil
+			// 检查是否有错误
+			m.mu.Lock()
+			err := m.lastError
+			m.mu.Unlock()
+			return err
 		}
 		select {
 		case <-updateDone:
-			return nil
+			// 检查是否有错误
+			m.mu.Lock()
+			err := m.lastError
+			m.mu.Unlock()
+			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
