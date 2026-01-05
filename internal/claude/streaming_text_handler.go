@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +100,50 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 	h.logger.Printf("Waiting for Claude output...")
 	if err := h.claudeManager.WaitForOutput(ctx); err != nil {
 		h.logger.Printf("Claude output wait error: %v", err)
+
+		// 检测是否是 session resume 失败
+		if strings.Contains(err.Error(), "No conversation found") && resumeSessionID != "" {
+			h.logger.Printf("Session resume failed, retrying without resume...")
+			h.stopAllTimers()
+
+			// 重新初始化 manager，不使用 resume
+			config := ClaudeConfig{}
+			if projectDir != "" {
+				config.ProjectDir = projectDir
+			}
+			h.claudeManager = NewClaudeManager(config)
+
+			// 重新设置回调
+			h.claudeManager.SetTextDeltaCallback(func(text string, sequence int) error {
+				h.logger.Printf("[TextDelta] seq=%d text_len=%d", sequence, len(text))
+				return h.onTextDelta(text)
+			})
+
+			h.claudeManager.SetCompleteCallback(func(finalText string) error {
+				h.logger.Printf("[Complete] final_text_len=%d", len(finalText))
+				h.stopAllTimers()
+				return h.sendRemaining()
+			})
+
+			h.claudeManager.SetErrorCallback(func(err error) {
+				h.logger.Printf("[Error] %v", err)
+			})
+
+			// 重新启动（不使用 resume）
+			if err := h.claudeManager.Start(ctx, userMessage, ""); err != nil {
+				h.stopAllTimers()
+				return fmt.Errorf("failed to start claude (retry): %w", err)
+			}
+
+			// 重新等待
+			if err := h.claudeManager.WaitForOutput(ctx); err != nil {
+				h.logger.Printf("Claude output wait error (retry): %v", err)
+			}
+
+			if err := h.claudeManager.WaitForExit(); err != nil {
+				h.logger.Printf("Claude exited with error (retry): %v", err)
+			}
+		}
 	}
 	h.stopAllTimers()
 
