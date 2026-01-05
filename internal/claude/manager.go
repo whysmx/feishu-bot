@@ -130,15 +130,17 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage, resumeSessionID 
 		m.sessionID = resumeSessionID
 	}
 
-	m.cmd = exec.CommandContext(ctx, "/Users/wen/.npm-global/bin/claude", append([]string{"--dangerously-skip-permissions"}, args...)...)
+	// 从环境变量读取 Claude CLI 路径，默认使用 "claude" 从 PATH 查找
+	claudePath := getEnvOrDefault("CLAUDE_CLI_PATH", "claude")
+	m.cmd = exec.CommandContext(ctx, claudePath, append([]string{"--dangerously-skip-permissions"}, args...)...)
 
-	// 设置环境变量（从cc1 shell函数复制）
+	// 从环境变量设置 Claude 配置
 	m.cmd.Env = append(os.Environ(),
-		"ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic",
-		"ANTHROPIC_API_KEY=a944d4a96c5b4de0af8557409ebc8fd6.n9f4QJFeF0hvIrW3",
-		"ANTHROPIC_AUTH_TOKEN=a944d4a96c5b4de0af8557409ebc8fd6.n9f4QJFeF0hvIrW3",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true",
-		"CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL=true",
+		fmt.Sprintf("ANTHROPIC_BASE_URL=%s", getEnvOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com")),
+		fmt.Sprintf("ANTHROPIC_API_KEY=%s", getEnvOrDefault("ANTHROPIC_API_KEY", "")),
+		fmt.Sprintf("ANTHROPIC_AUTH_TOKEN=%s", getEnvOrDefault("ANTHROPIC_AUTH_TOKEN", "")),
+		fmt.Sprintf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=%s", getEnvOrDefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "true")),
+		fmt.Sprintf("CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL=%s", getEnvOrDefault("CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL", "true")),
 	)
 
 	// 设置工作目录为项目目录
@@ -809,4 +811,12 @@ func (m *ClaudeManager) stopFlushTimer() {
 		m.flushTimer.Stop()
 		m.flushTimer = nil
 	}
+}
+
+// getEnvOrDefault 获取环境变量，如果不存在则返回默认值
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

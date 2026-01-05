@@ -34,16 +34,15 @@ func main() {
 		log.Println("No .env found; relying on existing environment variables")
 	}
 
+	// 验证必需的环境变量
+	if err := validateConfig(); err != nil {
+		log.Fatalf("配置验证失败: %v\n请检查 .env 文件是否配置正确", err)
+	}
+
 	// 获取配置
 	appID := getEnv("FEISHU_APP_ID", "")
-	if appID == "" {
-		log.Fatal("FEISHU_APP_ID is required")
-	}
 	appSecret := getEnv("FEISHU_APP_SECRET", "")
-	if appSecret == "" {
-		log.Fatal("FEISHU_APP_SECRET is required")
-	}
-	log.Printf("Using FEISHU_APP_ID=%s FEISHU_APP_SECRET=%s", appID, appSecret)
+	log.Printf("Using FEISHU_APP_ID=%s", appID)
 
 	sessionStorageFile := getEnv("SESSION_STORAGE_FILE", "data/sessions.json")
 	projectConfigPath := getEnv("PROJECT_CONFIG_FILE", "~/.feishu-bot/projects.json")
@@ -470,4 +469,58 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// validateConfig 验证必需的环境变量
+func validateConfig() error {
+	requiredVars := []struct {
+		name     string
+		hint     string
+		validate func(string) bool
+	}{
+		{
+			name: "FEISHU_APP_ID",
+			hint: "飞书应用 ID，格式如 cli_xxxxxxxx",
+			validate: func(v string) bool {
+				return strings.HasPrefix(v, "cli_")
+			},
+		},
+		{
+			name: "FEISHU_APP_SECRET",
+			hint: "飞书应用密钥",
+			validate: func(v string) bool {
+				return len(v) >= 10
+			},
+		},
+		{
+			name: "ANTHROPIC_API_KEY",
+			hint: "Anthropic API Key",
+			validate: func(v string) bool {
+				return strings.Contains(v, ".")
+			},
+		},
+		{
+			name: "ANTHROPIC_AUTH_TOKEN",
+			hint: "Anthropic Auth Token",
+			validate: func(v string) bool {
+				return strings.Contains(v, ".")
+			},
+		},
+	}
+
+	var missing []string
+	for _, rv := range requiredVars {
+		value := os.Getenv(rv.name)
+		if value == "" {
+			missing = append(missing, fmt.Sprintf("  - %s: %s", rv.name, rv.hint))
+		} else if rv.validate != nil && !rv.validate(value) {
+			missing = append(missing, fmt.Sprintf("  - %s: 格式不正确，期望 %s", rv.name, rv.hint))
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("缺少必需的环境变量或格式错误:\n%s\n\n请在 .env 文件中配置这些变量", strings.Join(missing, "\n"))
+	}
+
+	return nil
 }
