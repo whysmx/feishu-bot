@@ -108,7 +108,7 @@ grep "ERROR" /tmp/feishu-bot.log
 
 3. **Streaming Text Handler** (`internal/claude/streaming_text_handler.go`)
    - **基于时间的智能分段**：优化 API 调用次数
-   - 500ms 空闲超时：无新数据时发送缓冲区内容
+   - 3 秒空闲超时：无新数据时发送缓冲区内容
    - 10 秒最大持续时间：长时间输出强制分段
    - 30000 字符缓冲上限：防止超过飞书 150KB 限制
 
@@ -133,7 +133,7 @@ Claude Handler → 创建 CardKit 卡片
 解析 stream-json → 提取文本增量
     ↓
 StreamingTextHandler 智能分段缓冲
-    ├─ 500ms 空闲超时
+    ├─ 3 秒空闲超时
     ├─ 10 秒持续时间
     └─ 30000 字符缓冲上限
     ↓
@@ -173,21 +173,21 @@ cmd := exec.Command("cc1",
 **StreamingTextHandler** 实现基于时间的智能分段，优化 API 调用：
 
 **分段条件**（满足任一即发送）：
-1. **空闲超时**：500ms 无新数据 → 发送缓冲区
+1. **空闲超时**：3 秒无新数据 → 发送缓冲区
 2. **持续时间**：连续输出 10 秒 → 强制分段
 3. **缓冲区上限**：累积 30000 字符 → 强制分段
 4. **消息结束**：Claude 回复完成 → 发送剩余内容
 
 **实现细节**：
 ```go
-idleTimeout:   500 * time.Millisecond  // 空闲超时
-maxDuration:   10 * time.Second        // 最大持续时间
-maxBufferSize: 30000                   // 字符缓冲上限
+idleTimeout:   3 * time.Second  // 空闲超时（减少分包）
+maxDuration:   10 * time.Second  // 最大持续时间
+maxBufferSize: 30000             // 字符缓冲上限
 ```
 
 **优化目标**：
-- 减少 API 调用次数（避免每个字符都调用）
-- 保持流式输出体验（500ms 响应速度）
+- 减少 API 调用次数（避免频繁的小批量发送）
+- 保持流式输出体验（3 秒响应速度）
 - 防止超过飞书 150KB 消息大小限制
 
 ## 安全注意事项
