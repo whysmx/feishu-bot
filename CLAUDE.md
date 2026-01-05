@@ -99,6 +99,7 @@ grep "ERROR" /tmp/feishu-bot.log
    - 启动和管理 Claude CLI 进程
    - 解析 stream-json 输出
    - 提供文本增量回调
+   - **智能批量发送优化**：100 字符或 3 秒超时触发更新
 
 2. **CardKit Updater** (`internal/claude/cardkit_updater.go`)
    - 创建卡片实体
@@ -164,6 +165,25 @@ cmd := exec.Command("cc1",
 rateLimiter := time.NewTicker(100 * time.Millisecond)
 <-rateLimiter.C  // 等待限流
 ```
+
+### 5. 批量发送优化
+
+智能批量发送策略，平衡 API 调用次数和用户体验：
+
+**策略**：
+- 累积至少 **100 字符**才发送（减少 API 调用）
+- 或距离上次发送超过 **3 秒**（保证响应性）
+- 消息结束时强制发送（确保内容完整）
+
+**实现细节**：
+- 使用定时刷新器处理低频更新场景
+- 记录上次发送的文本长度和时间
+- 动态判断是否达到发送条件
+
+**优化目标**：
+- 在 10 QPS 限流下降低 API 调用频率
+- 保持流式输出的流畅体验
+- 避免频繁的小批量更新
 
 ## 安全注意事项
 
