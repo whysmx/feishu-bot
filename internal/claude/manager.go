@@ -179,11 +179,15 @@ func (m *ClaudeManager) Start(ctx context.Context, userMessage, resumeSessionID 
 		return fmt.Errorf("failed to send user message: %w", err)
 	}
 
-	// 注意：不要立即关闭 stdin
-	// Claude CLI 在 -p 模式下会持续处理输入，支持工具调用和多轮对话
-	// stdin 将在 message_stop 事件后才关闭（见 handleStreamEvent）
+	// 立即关闭 stdin 发送 EOF 信号
+	// Claude CLI 在 -p 模式下需要 EOF 才会开始处理用户消息
+	// 注意：这会导致工具调用失败（无法返回结果），但这是 Claude CLI -p 模式的限制
+	if err := m.stdin.Close(); err != nil {
+		log.Printf("[ClaudeManager] Warning: failed to close stdin: %v", err)
+	}
+	m.stdin = nil
 
-	log.Printf("[ClaudeManager] User message sent, starting parse goroutines")
+	log.Printf("[ClaudeManager] User message sent, stdin closed (EOF sent), starting parse goroutines")
 
 	// 重置状态
 	m.currentText.Reset()
@@ -588,14 +592,6 @@ func (m *ClaudeManager) notifyComplete() {
 		m.flushTimer = nil
 	}
 	m.flushTimerMu.Unlock()
-
-	// 关闭 stdin，让 Claude CLI 进程正常退出
-	// 这样可以确保工具调用和多轮对话正常工作
-	if m.stdin != nil {
-		log.Printf("[ClaudeManager] Closing stdin after message completion")
-		m.stdin.Close()
-		m.stdin = nil
-	}
 
 	// 如果还有未发送的内容，强制发送一次
 	finalText := m.currentText.String()
