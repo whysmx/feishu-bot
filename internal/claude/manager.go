@@ -433,20 +433,10 @@ func (m *ClaudeManager) handleTextDelta(event StreamEvent) {
 	currentLen := len(fullText)
 
 	// 批量发送策略：
-	// 1. 累积至少 100 字符才发送（节省 API 调用）
-	// 2. 或者距离上次发送超过 3 秒（保证用户体验）
-	// 3. 消息结束时强制发送
-	shouldSend := false
-	minBatchSize := 100        // 最小批量大小
-	maxInterval := 3 * time.Second // 最大时间间隔
-
-	if currentLen-m.lastUpdateLen >= minBatchSize {
-		// 达到最小批量大小
-		shouldSend = true
-	} else if !m.lastUpdateTime.IsZero() && time.Since(m.lastUpdateTime) >= maxInterval {
-		// 超过最大时间间隔
-		shouldSend = true
-	}
+	// 1. 每次文本增量都立即发送（保持流式效果）
+	// 2. 不再批量累积（避免工具调用导致的内容丢失）
+	// 3. handler.go 层面已经有缓冲机制，不需要这里再次批量
+	shouldSend := true  // 立即发送
 
 	if shouldSend {
 		sequence := m.textSequence
@@ -458,17 +448,10 @@ func (m *ClaudeManager) handleTextDelta(event StreamEvent) {
 		callback := m.onTextDelta
 		m.mu.Unlock()
 
-		// 停止之前的定时器
-		m.stopFlushTimer()
-
 		// 调用回调
 		if callback != nil {
 			m.enqueueUpdate(fullText, sequence)
 		}
-	} else {
-		// 没达到发送条件，启动/重置定时器
-		m.mu.Unlock()
-		m.resetFlushTimer(fullText)
 	}
 }
 
