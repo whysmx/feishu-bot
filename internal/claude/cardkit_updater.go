@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"feishu-bot/internal/utils"
 )
 
 // CardKitUpdater CardKit 流式更新器
@@ -29,14 +31,17 @@ type CardKitUpdater struct {
 
 // NewCardKitUpdater 创建 CardKit 更新器
 func NewCardKitUpdater(token, cardID, elementID, uuid string) *CardKitUpdater {
+	// 使用统一超时配置
+	timeoutConfig := utils.DefaultTimeoutConfig()
+
 	return &CardKitUpdater{
 		token:       token,
 		cardID:      cardID,
 		elementID:   elementID,
 		uuid:        uuid,
-		client:      &http.Client{Timeout: 10 * time.Second},
-		rateLimiter: time.NewTicker(500 * time.Millisecond), // 限制 2 QPS (降低 API 消耗)
-		currentSeq:  0,                                        // 默认初始值
+		client:      &http.Client{Timeout: timeoutConfig.HTTPClientTimeout},
+		rateLimiter: time.NewTicker(timeoutConfig.CardKitRateLimitInterval),
+		currentSeq:  0,
 	}
 }
 
@@ -235,7 +240,8 @@ func CreateStreamingCard(token, receiveID, receiveIDType, title, initialContent 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	timeoutConfig := utils.DefaultTimeoutConfig()
+	client := &http.Client{Timeout: timeoutConfig.HTTPClientTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("failed to send create request: %w", err)

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"feishu-bot/internal/utils"
 )
 
 // StreamEvent Claude CLI stream-json 事件结构
@@ -517,7 +519,8 @@ func (m *ClaudeManager) handleContentBlockStop(event StreamEvent) {
 	log.Printf("[ClaudeManager] Content block stop, checking for tool execution: tool_name=%s", tool.name)
 
 	// 等待一小段时间让完整的 input JSON 传输完成
-	time.Sleep(100 * time.Millisecond)
+	timeoutConfig := utils.DefaultTimeoutConfig()
+	time.Sleep(timeoutConfig.ToolInputWaitDelay)
 
 	// 执行工具（简化版：只支持 Bash 工具）
 	if tool.name == "Bash" {
@@ -647,7 +650,7 @@ func (m *ClaudeManager) Stop() {
 		select {
 		case <-done:
 			// 进程已结束
-		case <-time.After(5 * time.Second):
+		case <-time.After(utils.DefaultTimeoutConfig().ProcessWaitTimeout):
 			// 超时，强制杀死
 			m.cmd.Process.Kill()
 		}
@@ -778,8 +781,9 @@ func (m *ClaudeManager) resetFlushTimer(text string) {
 		m.flushTimer.Stop()
 	}
 
-	// 创建新定时器（3 秒后强制发送）
-	m.flushTimer = time.AfterFunc(3*time.Second, func() {
+	// 创建新定时器（使用配置的刷新间隔）
+	timeoutConfig := utils.DefaultTimeoutConfig()
+	m.flushTimer = time.AfterFunc(timeoutConfig.FlushTimerInterval, func() {
 		m.mu.Lock()
 		// 检查是否已经有新的发送
 		currentLen := m.currentText.Len()

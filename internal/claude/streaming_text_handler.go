@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"feishu-bot/internal/bot/client"
+	"feishu-bot/internal/utils"
 )
 
 // StreamingTextHandler 流式文本处理器（不使用 CardKit，节省 API 调用）
@@ -41,11 +42,14 @@ type StreamingTextHandler struct {
 
 // NewStreamingTextHandler 创建流式文本处理器
 func NewStreamingTextHandler(feishuClient *client.FeishuClient) *StreamingTextHandler {
+	// 使用统一超时配置
+	timeoutConfig := utils.DefaultTimeoutConfig()
+
 	return &StreamingTextHandler{
 		feishuClient:  feishuClient,
-		idleTimeout:   8 * time.Second,  // 8秒无新数据则发送（进一步优化：减少API调用）
-		maxDuration:   20 * time.Second, // 20秒连续输出后强制分段（配合idleTimeout调整）
-		maxBufferSize: 30000,            // 最大缓冲区30000字符（防止超过飞书150KB限制）
+		idleTimeout:   timeoutConfig.StreamIdleTimeout,
+		maxDuration:   timeoutConfig.StreamMaxDuration,
+		maxBufferSize: timeoutConfig.StreamMaxBufferSize,
 		logger:        log.New(os.Stdout, "[StreamingTextHandler] ", log.LstdFlags),
 		stopTimers:    make(chan struct{}),
 	}
