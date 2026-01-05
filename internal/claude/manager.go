@@ -55,6 +55,12 @@ type ClaudeManager struct {
 	onComplete    func(finalText string) error
 	onError       func(err error)
 	pendingTool   *pendingToolCall // 当前待执行的工具
+
+	// 批量发送优化
+	lastUpdateLen int             // 上次发送时的文本长度
+	lastUpdateTime time.Time      // 上次发送时间
+	flushTimer    *time.Timer     // 定时刷新器
+	flushTimerMu  sync.Mutex      // 定时器锁
 }
 
 // ClaudeConfig Claude CLI 配置
@@ -302,8 +308,13 @@ func (m *ClaudeManager) handleStreamEvent(event StreamEvent) {
 		}
 		m.currentText.Reset()
 		m.textSequence = 1 // CardKit API 要求序列号从 1 开始
+		m.lastUpdateLen = 0       // 重置批量发送状态
+		m.lastUpdateTime = time.Time{} // 重置发送时间
 		log.Printf("[ClaudeManager] message_start: message_id=%s last_message_id=%s prev_seq=%d new_seq=%d", messageID, prevMessageID, prevSeq, m.textSequence)
 		m.mu.Unlock()
+
+		// 停止之前的定时器
+		m.stopFlushTimer()
 
 	case "content_block_start":
 		// 检测工具调用
@@ -420,16 +431,45 @@ func (m *ClaudeManager) handleTextDelta(event StreamEvent) {
 	m.mu.Lock()
 	m.currentText.WriteString(text)
 	fullText := m.currentText.String()
-	sequence := m.textSequence // 先使用当前序列号
-	m.textSequence++           // 然后递增
+	currentLen := len(fullText)
 
-	// 获取回调（复制引用避免死锁）
-	callback := m.onTextDelta
-	m.mu.Unlock()
+	// 批量发送策略：
+	// 1. 累积至少 100 字符才发送（节省 API 调用）
+	// 2. 或者距离上次发送超过 3 秒（保证用户体验）
+	// 3. 消息结束时强制发送
+	shouldSend := false
+	minBatchSize := 100        // 最小批量大小
+	maxInterval := 3 * time.Second // 最大时间间隔
 
-	// 调用回调
-	if callback != nil {
-		m.enqueueUpdate(fullText, sequence)
+	if currentLen-m.lastUpdateLen >= minBatchSize {
+		// 达到最小批量大小
+		shouldSend = true
+	} else if !m.lastUpdateTime.IsZero() && time.Since(m.lastUpdateTime) >= maxInterval {
+		// 超过最大时间间隔
+		shouldSend = true
+	}
+
+	if shouldSend {
+		sequence := m.textSequence
+		m.textSequence++
+		m.lastUpdateLen = currentLen
+		m.lastUpdateTime = time.Now()
+
+		// 获取回调（复制引用避免死锁）
+		callback := m.onTextDelta
+		m.mu.Unlock()
+
+		// 停止之前的定时器
+		m.stopFlushTimer()
+
+		// 调用回调
+		if callback != nil {
+			m.enqueueUpdate(fullText, sequence)
+		}
+	} else {
+		// 没达到发送条件，启动/重置定时器
+		m.mu.Unlock()
+		m.resetFlushTimer(fullText)
 	}
 }
 
@@ -545,10 +585,42 @@ func (m *ClaudeManager) markToolCompleted(toolID, result string) {
 // notifyComplete 通知完成
 func (m *ClaudeManager) notifyComplete() {
 	m.mu.Lock()
+
+	// 停止定时器
+	m.flushTimerMu.Lock()
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	m.flushTimerMu.Unlock()
+
+	// 如果还有未发送的内容，强制发送一次
+	finalText := m.currentText.String()
+	if len(finalText) > m.lastUpdateLen {
+		sequence := m.textSequence
+		m.textSequence++
+		m.lastUpdateLen = len(finalText)
+
+		callback := m.onTextDelta
+		m.mu.Unlock()
+
+		if callback != nil {
+			m.enqueueUpdate(finalText, sequence)
+		}
+
+		// 等待队列清空
+		if m.updateDone != nil {
+			<-m.updateDone
+		}
+	} else {
+		m.mu.Unlock()
+	}
+
+	// 调用完成回调
+	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.onComplete != nil {
-		finalText := m.currentText.String()
 		if err := m.onComplete(finalText); err != nil {
 			m.handleError(fmt.Errorf("failed to send complete: %w", err))
 		}
@@ -699,5 +771,50 @@ func (m *ClaudeManager) processUpdates() {
 		if err := callback(update.text, update.sequence); err != nil {
 			m.handleError(fmt.Errorf("failed to send text delta: %w", err))
 		}
+	}
+}
+
+// resetFlushTimer 重置刷新定时器
+func (m *ClaudeManager) resetFlushTimer(text string) {
+	m.flushTimerMu.Lock()
+	defer m.flushTimerMu.Unlock()
+
+	// 停止旧定时器
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+	}
+
+	// 创建新定时器（3 秒后强制发送）
+	m.flushTimer = time.AfterFunc(3*time.Second, func() {
+		m.mu.Lock()
+		// 检查是否已经有新的发送
+		currentLen := m.currentText.Len()
+		if currentLen <= m.lastUpdateLen {
+			m.mu.Unlock()
+			return
+		}
+
+		sequence := m.textSequence
+		m.textSequence++
+		m.lastUpdateLen = currentLen
+		m.lastUpdateTime = time.Now()
+
+		callback := m.onTextDelta
+		m.mu.Unlock()
+
+		if callback != nil {
+			m.enqueueUpdate(text, sequence)
+		}
+	})
+}
+
+// stopFlushTimer 停止刷新定时器
+func (m *ClaudeManager) stopFlushTimer() {
+	m.flushTimerMu.Lock()
+	defer m.flushTimerMu.Unlock()
+
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
 	}
 }
