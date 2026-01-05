@@ -5,14 +5,11 @@ import (
 	"context"
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/bot/handlers"
-	"feishu-bot/internal/notification"
-	"feishu-bot/internal/project"
 	"feishu-bot/internal/utils"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +41,6 @@ func main() {
 	appSecret := getEnv("FEISHU_APP_SECRET", "")
 	log.Printf("Using FEISHU_APP_ID=%s", appID)
 
-	projectConfigPath := getEnv("PROJECT_CONFIG_FILE", "~/.feishu-bot/projects.json")
 	logLevel := getEnv("LOG_LEVEL", "info")
 	larkLogLevel := larkcore.LogLevelInfo
 	if logLevel == "debug" {
@@ -56,23 +52,10 @@ func main() {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
 
-	// 初始化项目配置管理器
-	projectManager, err := project.NewManager(projectConfigPath)
-	if err != nil {
-		log.Fatalf("Failed to initialize project manager: %v", err)
-	}
-	log.Printf("Project manager initialized: config=%s", projectConfigPath)
-
 	// 初始化飞书客户端
 	feishuClient := client.NewFeishuClient(client.FeishuConfig{
 		AppID:     appID,
 		AppSecret: appSecret,
-		CardTemplates: client.CardTemplates{
-			TaskCompleted: getEnv("TASK_COMPLETED_CARD_ID", ""),
-			TaskWaiting:   getEnv("TASK_WAITING_CARD_ID", ""),
-			CommandResult: getEnv("COMMAND_RESULT_CARD_ID", ""),
-			SessionList:   getEnv("SESSION_LIST_CARD_ID", ""),
-		},
 	})
 
 	// 启动时做一次 token 自检，便于定位偶发 10014
@@ -82,43 +65,20 @@ func main() {
 		log.Printf("Tenant token self-check ok: token=%s", token)
 	}
 
-	// 初始化通知发送器
-	notificationSender := notification.NewFeishuNotificationSender(feishuClient)
-
-	// 初始化消息处理器（传入 projectManager）
-	messageHandler := handlers.NewMessageHandler(nil, notificationSender, feishuClient, projectManager)
-
-	// 初始化卡片交互处理器
-	cardHandler := handlers.NewCardActionHandler(nil, notificationSender)
+	// 初始化消息处理器
+	messageHandler := handlers.NewMessageHandler(feishuClient)
 
 	// 注册事件处理器
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		// 处理用户进入机器人单聊事件
 		OnP2ChatAccessEventBotP2pChatEnteredV1(func(ctx context.Context, event *larkim.P2ChatAccessEventBotP2pChatEnteredV1) error {
 			log.Printf("[OnP2ChatAccessEventBotP2pChatEnteredV1] User entered: %s", larkcore.Prettify(event))
-
-			openID := *event.Event.OperatorId.OpenId
-			if err := sendWelcomeMessage(notificationSender, openID); err != nil {
-				log.Printf("Failed to send welcome message: %v", err)
-			}
 			return nil
 		}).
 		// 处理用户点击机器人菜单事件
 		OnP2BotMenuV6(func(ctx context.Context, event *larkapplication.P2BotMenuV6) error {
 			log.Printf("[OnP2BotMenuV6] Menu clicked: %s", larkcore.Prettify(event))
-
-			openID := *event.Event.Operator.OperatorId.OpenId
-			eventKey := *event.Event.EventKey
-
-			switch eventKey {
-			case "help":
-				return sendHelpMessage(notificationSender, openID)
-			case "sessions":
-				userID := *event.Event.Operator.OperatorId.UserId
-				return handleSessionsFromMenu(messageHandler, openID, userID)
-			default:
-				return sendHelpMessage(notificationSender, openID)
-			}
+			return nil
 		}).
 		// 接收用户发送的消息
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -226,20 +186,6 @@ func main() {
 				log.Printf("Card action processed successfully, notes: %s", notes)
 				return response, nil
 
-			case "send_command", "continue_work", "view_status", "view_session", "view_options", "end_session", "retry_command":
-				// 对于我们系统的特定action，调用内部handler
-				response, err := cardHandler.HandleCardAction(ctx, event)
-				if err != nil {
-					log.Printf("Failed to handle card action: %v", err)
-					return &callback.CardActionTriggerResponse{
-						Toast: &callback.Toast{
-							Type:    "error",
-							Content: "处理失败",
-						},
-					}, nil
-				}
-				return response, nil
-
 			default:
 				log.Printf("Unknown card action: %s", action)
 				return &callback.CardActionTriggerResponse{
@@ -264,8 +210,7 @@ func main() {
 	)
 
 	log.Println("Starting WebSocket connection to Feishu...")
-	err = wsClient.Start(context.Background())
-	if err != nil {
+	if err := wsClient.Start(context.Background()); err != nil {
 		log.Fatalf("Failed to start WebSocket client: %v", err)
 	}
 }
@@ -333,56 +278,6 @@ func writeTraceLine(line string) {
 	_ = os.WriteFile(traceLogPath, []byte(line), 0644)
 }
 
-// sendWelcomeMessage 发送欢迎消息
-func sendWelcomeMessage(sender notification.NotificationSender, openID string) error {
-welcomeText := `🎉 欢迎使用 Claude CLI 对话机器人！
-
-使用方法：
-• 直接发送任何消息即可开始对话
-
-说明：
-• 所有消息会直接透传给 Claude CLI
-• 不做命令拦截或二次加工`
-
-	// 尝试发送文本消息
-	if textSender, ok := sender.(interface {
-		SendTextNotification(openID, message string) error
-	}); ok {
-		return textSender.SendTextNotification(openID, welcomeText)
-	}
-
-	log.Printf("Sending welcome message to %s", openID)
-	return nil
-}
-
-// sendHelpMessage 发送帮助消息
-func sendHelpMessage(sender notification.NotificationSender, openID string) error {
-	helpText := `💡 使用说明
-
-• 直接发送任何消息即可对话
-
-说明：
-• 所有消息会直接透传给 Claude CLI
-• 不做命令拦截或二次加工`
-
-	if textSender, ok := sender.(interface {
-		SendTextNotification(openID, message string) error
-	}); ok {
-		return textSender.SendTextNotification(openID, helpText)
-	}
-
-	log.Printf("Sending help message to %s", openID)
-	return nil
-}
-
-// handleSessionsFromMenu 处理菜单中的会话命令
-func handleSessionsFromMenu(handler *handlers.MessageHandler, openID, userID string) error {
-	// 这里需要调用handler的方法，但handler的方法是私有的
-	// 在实际实现中需要添加公开的方法
-	log.Printf("Handling sessions command from menu for user %s", userID)
-	return nil
-}
-
 // getEnv 获取环境变量，如果不存在则使用默认值
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
@@ -438,28 +333,6 @@ func loadDotEnv(paths ...string) (string, bool) {
 	}
 
 	return "", false
-}
-
-// getEnvInt 获取整数环境变量
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "1", "true", "yes", "y", "on":
-			return true
-		case "0", "false", "no", "n", "off":
-			return false
-		}
-	}
-	return defaultValue
 }
 
 // validateConfig 验证必需的环境变量

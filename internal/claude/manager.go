@@ -519,8 +519,7 @@ func (m *ClaudeManager) handleContentBlockStop(event StreamEvent) {
 	log.Printf("[ClaudeManager] Content block stop, checking for tool execution: tool_name=%s", tool.name)
 
 	// 等待一小段时间让完整的 input JSON 传输完成
-	timeoutConfig := utils.DefaultTimeoutConfig()
-	time.Sleep(timeoutConfig.ToolInputWaitDelay)
+	time.Sleep(100 * time.Millisecond)
 
 	// 执行工具（简化版：只支持 Bash 工具）
 	if tool.name == "Bash" {
@@ -781,9 +780,8 @@ func (m *ClaudeManager) resetFlushTimer(text string) {
 		m.flushTimer.Stop()
 	}
 
-	// 创建新定时器（使用配置的刷新间隔）
-	timeoutConfig := utils.DefaultTimeoutConfig()
-	m.flushTimer = time.AfterFunc(timeoutConfig.FlushTimerInterval, func() {
+	// 创建新定时器（3秒刷新间隔）
+	m.flushTimer = time.AfterFunc(3*time.Second, func() {
 		m.mu.Lock()
 		// 检查是否已经有新的发送
 		currentLen := m.currentText.Len()

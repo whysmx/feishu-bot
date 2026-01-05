@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"feishu-bot/internal/bot/client"
 	"feishu-bot/internal/claude"
-	"feishu-bot/internal/command"
-	"feishu-bot/internal/notification"
-	"feishu-bot/internal/project"
 	"feishu-bot/internal/utils"
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,32 +19,21 @@ import (
 
 // MessageHandler 消息处理器
 type MessageHandler struct {
-	commandExecutor     command.CommandExecutor
-	notificationSender  notification.NotificationSender
-	logger              *log.Logger
-	feishuClient        *client.FeishuClient // 添加飞书客户端
-	projectManager      *project.Manager     // 项目配置管理器
-	recentMessageIDs    map[string]time.Time
-	recentMessageMu     sync.Mutex
-	claudeSessions      map[string]string
-	claudeSessionMu     sync.Mutex
+	logger           *log.Logger
+	feishuClient     *client.FeishuClient
+	recentMessageIDs map[string]time.Time
+	recentMessageMu  sync.Mutex
+	claudeSessions   map[string]string
+	claudeSessionMu  sync.Mutex
 }
 
 // NewMessageHandler 创建消息处理器
-func NewMessageHandler(
-	commandExecutor command.CommandExecutor,
-	notificationSender notification.NotificationSender,
-	feishuClient *client.FeishuClient,
-	projectManager *project.Manager,
-) *MessageHandler {
+func NewMessageHandler(feishuClient *client.FeishuClient) *MessageHandler {
 	return &MessageHandler{
-		commandExecutor:     commandExecutor,
-		notificationSender:  notificationSender,
-		feishuClient:        feishuClient,
-		projectManager:      projectManager,
-		logger:              log.New(log.Writer(), "[MessageHandler] ", log.LstdFlags),
-		recentMessageIDs:    make(map[string]time.Time),
-		claudeSessions:      make(map[string]string),
+		feishuClient:     feishuClient,
+		logger:           log.New(log.Writer(), "[MessageHandler] ", log.LstdFlags),
+		recentMessageIDs: make(map[string]time.Time),
+		claudeSessions:   make(map[string]string),
 	}
 }
 
@@ -156,7 +141,7 @@ func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.
 	isMentioned := mh.isMentioned(event.Event.Message)
 	mh.logger.Printf("[DEBUG] GROUP message: chat_id=%s is_mentioned=%t content=%q", chatID, isMentioned, content)
 
-	// 如果 @机器人，检查是否是命令
+	// 如果 @机器人，直接处理对话（不支持命令）
 	if isMentioned {
 		trimmedContent := strings.TrimSpace(content)
 
@@ -169,26 +154,13 @@ func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.
 		}
 		trimmedContent = strings.TrimSpace(trimmedContent)
 
-		// 空消息，显示帮助
+		// 空消息，提示使用
 		if trimmedContent == "" {
-			return mh.handleHelpCommand(chatID, receiveID, receiveIDType)
+			return mh.sendTextMessage(receiveID, receiveIDType, "💡 提及机器人后输入问题即可对话")
 		}
 
-		// 解析命令（第一个单词）
-		cmdParts := strings.Fields(trimmedContent)
-		cmd := cmdParts[0]
-
-		if cmd == "bind" {
-			return mh.handleBindCommand(chatID, receiveID, receiveIDType, trimmedContent)
-		}
-		if cmd == "ls" {
-			return mh.handleLsCommand(receiveID, receiveIDType)
-		}
-		if cmd == "help" {
-			return mh.handleHelpCommand(chatID, receiveID, receiveIDType)
-		}
-		// @机器人但不是命令，提示使用帮助
-		return mh.sendTextMessageDirect(receiveID, receiveIDType, "❓ 未知命令\n\n发送 @机器人 help 查看可用命令")
+		// 处理 @机器人的对话
+		return mh.processGroupMessage(groupSessionID, userID, receiveID, receiveIDType, trimmedContent)
 	}
 
 	// 不是 @机器人，正常处理对话
@@ -212,14 +184,6 @@ func (mh *MessageHandler) processGroupMessage(sessionID, userID, receiveID, rece
 		return fmt.Errorf("cannot send card: missing valid receive ID")
 	}
 
-	// 获取项目目录（如果已绑定）
-	projectDir := mh.projectManager.GetProjectDir(receiveID)
-	if projectDir != "" {
-		mh.logger.Printf("[DEBUG] Group chat using project dir: %s", projectDir)
-	} else {
-		mh.logger.Printf("[DEBUG] Group chat no project dir bound, using default")
-	}
-
 	// 创建 Claude 流式文本处理器（不使用 CardKit，节省 API 调用）
 	streamingTextHandler := claude.NewStreamingTextHandler(mh.feishuClient)
 
@@ -229,7 +193,7 @@ func (mh *MessageHandler) processGroupMessage(sessionID, userID, receiveID, rece
 
 	// 处理消息（流式分段发送，同步 CLI 输出节奏）
 	ctx := context.Background()
-	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, content, resumeSessionID, projectDir); err != nil {
+	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, content, resumeSessionID, ""); err != nil {
 		mh.logger.Printf("Failed to handle group streaming text chat: %v", err)
 		return fmt.Errorf("failed to handle group streaming text chat: %w", err)
 	}
@@ -366,21 +330,6 @@ func (mh *MessageHandler) processMessage(openID, userID, receiveID, receiveIDTyp
 	return mh.handleStreamingChat(openID, userID, receiveID, receiveIDType, content)
 }
 
-// isRemoteCommand 检查是否是远程命令
-
-// parseRemoteCommand 解析远程命令
-func (mh *MessageHandler) parseRemoteCommand(content string) (token, command string, err error) {
-	// 匹配 TOKEN: command 格式
-	re := regexp.MustCompile(`^([A-Z0-9]{8}):\s*(.+)$`)
-	matches := re.FindStringSubmatch(content)
-
-	if len(matches) != 3 {
-		return "", "", fmt.Errorf("invalid command format")
-	}
-
-	return matches[1], strings.TrimSpace(matches[2]), nil
-}
-
 // extractTextContent 提取文本内容
 func (mh *MessageHandler) extractTextContent(message interface{}) (string, error) {
 	if message == nil {
@@ -453,31 +402,8 @@ func (mh *MessageHandler) isMentioned(message *larkim.EventMessage) bool {
 
 
 // sendTextMessage 发送文本消息的便捷方法
-func (mh *MessageHandler) sendTextMessage(openID, text string) error {
-	// 这里假设notificationSender有一个SendTextNotification方法
-	// 在实际实现中需要根据具体接口调整
-	if sender, ok := mh.notificationSender.(interface {
-		SendTextNotification(openID, message string) error
-	}); ok {
-		return sender.SendTextNotification(openID, text)
-	}
-
-	// 如果没有SendTextNotification方法，使用基本的发送方式
-	mh.logger.Printf("Sending text message to %s: %s", openID, text)
-	return nil
-}
-
-// sendHelpMessage 发送帮助消息的便捷方法
-func (mh *MessageHandler) sendHelpMessage(openID string) error {
-	helpText := `💡 使用说明
-
-• 直接发送任何消息即可对话
-
-说明：
-• 所有消息会直接透传给 Claude CLI
-• 不做命令拦截或二次加工`
-
-	return mh.sendTextMessage(openID, helpText)
+func (mh *MessageHandler) sendTextMessage(receiveID, receiveIDType, text string) error {
+	return mh.feishuClient.SendMessage(receiveID, receiveIDType, text)
 }
 
 // handleStreamingChat 处理流式对话请求
@@ -489,27 +415,24 @@ func (mh *MessageHandler) handleStreamingChat(openID, userID, receiveID, receive
 	token, err := mh.feishuClient.GetTenantAccessToken()
 	if err != nil {
 		mh.logger.Printf("Failed to get tenant access token: %v", err)
-		return mh.sendTextMessage(openID, "❌ 获取访问令牌失败")
+		return mh.sendTextMessage(receiveID, receiveIDType, "❌ 获取访问令牌失败")
 	}
 
 	// 验证 receive_id 不为空
 	if receiveID == "" {
 		mh.logger.Printf("ERROR: receiveID is empty! receiveIDType=%s", receiveIDType)
-		return mh.sendTextMessage(openID, "❌ 无法发送卡片：缺少有效的会话ID")
+		return mh.sendTextMessage(receiveID, receiveIDType, "❌ 无法发送卡片：缺少有效的会话ID")
 	}
 
 	// 创建 Claude 流式文本处理器（不使用 CardKit，节省 API 调用）
 	streamingTextHandler := claude.NewStreamingTextHandler(mh.feishuClient)
 	resumeSessionID := mh.getClaudeSession(openID)
 
-	// P2P 不使用项目目录（传空字符串）
-	projectDir := ""
-
 	// 处理消息（流式分段发送，同步 CLI 输出节奏）
 	ctx := context.Background()
-	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, question, resumeSessionID, projectDir); err != nil {
+	if err := streamingTextHandler.HandleMessage(ctx, token, receiveID, receiveIDType, question, resumeSessionID, ""); err != nil {
 		mh.logger.Printf("Failed to handle streaming text chat: %v", err)
-		return mh.sendTextMessage(openID, "❌ 对话处理失败: "+err.Error())
+		return mh.sendTextMessage(receiveID, receiveIDType, "❌ 对话处理失败: "+err.Error())
 	}
 	if sessionID := streamingTextHandler.SessionID(); sessionID != "" {
 		mh.setClaudeSession(openID, sessionID)
@@ -517,120 +440,4 @@ func (mh *MessageHandler) handleStreamingChat(openID, userID, receiveID, receive
 
 	mh.logger.Printf("Streaming text chat completed successfully for user %s", userID)
 	return nil
-}
-
-// handleBindCommand 处理 bind 命令
-func (mh *MessageHandler) handleBindCommand(chatID, receiveID, receiveIDType, command string) error {
-	// 解析参数：bind <序号或路径>
-	parts := strings.Fields(command)
-	if len(parts) < 2 {
-		return mh.sendTextMessageDirect(receiveID, receiveIDType, "❌ 用法错误\n\n@机器人 bind <序号或路径>\n\n示例：\n@机器人 bind 1\n@机器人 bind ~/Desktop/code/my-app")
-	}
-
-	param := strings.TrimSpace(strings.TrimPrefix(command, "bind "))
-
-	var projectPath string
-
-	// 检查是否是纯数字（序号）
-	if len(param) > 0 && param[0] >= '0' && param[0] <= '9' {
-		// 解析序号
-		var index int
-		_, err := fmt.Sscanf(param, "%d", &index)
-		if err != nil {
-			return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("❌ 序号格式错误: %v", err))
-		}
-
-		// 获取项目列表
-		projects, err := mh.projectManager.ListBaseDirProjects()
-		if err != nil {
-			mh.logger.Printf("Failed to list projects: %v", err)
-			return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("❌ 获取项目列表失败: %v", err))
-		}
-
-		// 检查序号是否有效
-		if index < 1 || index > len(projects) {
-			return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("❌ 序号超出范围\n\n有效范围：1-%d", len(projects)))
-		}
-
-		// 使用序号获取路径（序号从 1 开始，数组从 0 开始）
-		projectPath = projects[index-1]
-	} else {
-		// 直接使用路径
-		projectPath = param
-	}
-
-	// 绑定项目路径
-	if err := mh.projectManager.BindChat(chatID, projectPath); err != nil {
-		mh.logger.Printf("Failed to bind chat %s to %s: %v", chatID, projectPath, err)
-		return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("❌ 绑定失败: %v", err))
-	}
-
-	// 获取绑定的绝对路径
-	boundPath := mh.projectManager.GetProjectDir(chatID)
-	mh.logger.Printf("Chat %s bound to %s", chatID, boundPath)
-
-	return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("✅ 已绑定项目路径：\n\n%s", boundPath))
-}
-
-// handleLsCommand 处理 /ls 命令
-func (mh *MessageHandler) handleLsCommand(receiveID, receiveIDType string) error {
-	projects, err := mh.projectManager.ListBaseDirProjects()
-	if err != nil {
-		mh.logger.Printf("Failed to list projects: %v", err)
-		return mh.sendTextMessageDirect(receiveID, receiveIDType, fmt.Sprintf("❌ 获取项目列表失败: %v", err))
-	}
-
-	if len(projects) == 0 {
-		return mh.sendTextMessageDirect(receiveID, receiveIDType, "📂 项目列表为空\n\n~/Desktop/code/ 目录下没有文件夹")
-	}
-
-	// 构建项目列表消息（带序号）
-	var msg strings.Builder
-	msg.WriteString("📂 可用项目列表：\n\n")
-	for i, project := range projects {
-		// 序号从 1 开始
-		msg.WriteString(fmt.Sprintf("%d. %s\n", i+1, project))
-	}
-	msg.WriteString(fmt.Sprintf("\n共 %d 个项目\n\n使用方法：@机器人 bind <序号>", len(projects)))
-
-	return mh.sendTextMessageDirect(receiveID, receiveIDType, msg.String())
-}
-
-// handleHelpCommand 处理 /help 命令
-func (mh *MessageHandler) handleHelpCommand(chatID, receiveID, receiveIDType string) error {
-	// 获取当前群聊绑定的项目路径
-	currentDir := mh.projectManager.GetProjectDir(chatID)
-
-	var statusText string
-	if currentDir != "" {
-		statusText = fmt.Sprintf("📂 当前项目路径：\n\n%s\n\n", currentDir)
-	} else {
-		statusText = "📂 当前项目路径：未绑定（使用默认目录）\n\n"
-	}
-
-	helpText := statusText + `🤖 飞书 Claude 机器人使用指南
-
-📁 项目管理：
-  @机器人 bind <序号或路径>   绑定项目目录
-  示例：@机器人 bind 1
-        @机器人 bind ~/Desktop/code/my-app
-
-  @机器人 ls                  查看可用项目列表（带序号）
-
-  @机器人 help                显示此帮助
-
-💬 对话：
-  直接发送消息即可，无需 @机器人
-
-📝 说明：
-  • 绑定后，Claude CLI 将在指定项目目录下运行
-  • 可以访问项目文件和代码上下文
-  • 私聊中直接对话，无需 @机器人`
-
-	return mh.sendTextMessageDirect(receiveID, receiveIDType, helpText)
-}
-
-// sendTextMessageDirect 直接发送文本消息（不通过 Claude）
-func (mh *MessageHandler) sendTextMessageDirect(receiveID, receiveIDType, content string) error {
-	return mh.feishuClient.SendMessage(receiveID, receiveIDType, content)
 }

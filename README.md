@@ -35,34 +35,34 @@
 │   │       └── message.go
 │   ├── claude/                   # Claude CLI 集成
 │   │   ├── manager.go            # CLI 进程管理
-│   │   ├── cardkit_updater.go    # 卡片流式更新
-│   │   └── handler.go            # 对话处理器
-│   ├── command/                  # 命令处理
-│   ├── notification/             # 通知服务
-│   └── session/                  # 会话管理
+│   │   └── streaming_text_handler.go  # 流式文本处理
+│   └── utils/                    # 工具函数
+│       ├── paths.go
+│       └── timeout.go
 ├── configs/                      # 配置文件
+├── scripts/                      # 部署脚本
+│   ├── start-bot.sh
+│   ├── stop-bot.sh
+│   └── restart-bot.sh
 ├── .env                          # 环境变量
+├── .env.example                  # 配置示例
 ├── go.mod
 └── Makefile
 ```
 
 ## 核心功能
 
-### 1. 流式对话
+### 1. 流式文本对话
 - 调用本地 Claude CLI (`cc1` 命令)
 - 解析 `stream-json` 格式输出
 - 实时提取文本增量
+- 智能分段发送（空闲超时 + 最大持续时间）
 
-### 2. CardKit 集成
-- 创建卡片实体
-- 流式更新卡片内容
-- 限流控制（10 次/秒）
-- 打字机效果配置
-
-### 3. 消息处理
+### 2. 消息处理
 - WebSocket 长连接接收消息
-- 直接消息发起对话（无需 /chat）
-- 自动创建和更新卡片
+- 支持单聊（P2P）和群聊
+- 群聊需要 @机器人 触发
+- 自动回复，无需命令前缀
 
 ## 快速开始
 

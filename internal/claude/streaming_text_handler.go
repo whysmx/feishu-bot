@@ -66,6 +66,9 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 	h.lastDataTime = time.Now()
 	h.stopTimers = make(chan struct{})
 
+	// 启动空闲定时器 goroutine（只启动一次）
+	h.runIdleTimerGoroutine()
+
 	// 初始化 Claude 管理器（带项目目录）
 	config := ClaudeConfig{}
 	if projectDir != "" {
@@ -80,22 +83,24 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 		return h.onTextDelta(text)
 	})
 
-	// 设置完成回调 - 发送剩余所有内容并停止定时器
+	// 设置完成回调 - 只记录日志，不立即发送（防止多次触发）
+	// 发送由 WaitForExit 后统一处理
 	h.claudeManager.SetCompleteCallback(func(finalText string) error {
-		h.logger.Printf("[Complete] final_text_len=%d", len(finalText))
-		h.stopAllTimers()
-		return h.sendRemaining()
+		h.logger.Printf("[Complete] final_text_len=%d (skipping send)", len(finalText))
+		return nil
 	})
 
-	// 设置错误回调
+	// 设置错误回调 - 不停止定时器，让空闲定时器继续工作
 	h.claudeManager.SetErrorCallback(func(err error) {
 		h.logger.Printf("[Error] Claude error: %v", err)
-		h.stopAllTimers()
+		// 不停止定时器，让 idleTimer 继续发送缓冲区内容
 	})
 
 	// 启动 Claude CLI
 	h.logger.Printf("Starting Claude CLI...")
 	if err := h.claudeManager.Start(ctx, userMessage, resumeSessionID); err != nil {
+		// 启动失败，发送缓冲区已有内容
+		_ = h.sendRemaining()
 		h.stopAllTimers()
 		return fmt.Errorf("failed to start claude: %w", err)
 	}
@@ -108,7 +113,7 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 		// 检测是否是 session resume 失败
 		if strings.Contains(err.Error(), "No conversation found") && resumeSessionID != "" {
 			h.logger.Printf("Session resume failed, retrying without resume...")
-			h.stopAllTimers()
+			// 不停止定时器，让空闲定时器继续工作
 
 			// 重新初始化 manager，不使用 resume
 			config := ClaudeConfig{}
@@ -124,9 +129,8 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 			})
 
 			h.claudeManager.SetCompleteCallback(func(finalText string) error {
-				h.logger.Printf("[Complete] final_text_len=%d", len(finalText))
-				h.stopAllTimers()
-				return h.sendRemaining()
+				h.logger.Printf("[Complete] final_text_len=%d (skipping send, retry)", len(finalText))
+				return nil
 			})
 
 			h.claudeManager.SetErrorCallback(func(err error) {
@@ -135,6 +139,7 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 
 			// 重新启动（不使用 resume）
 			if err := h.claudeManager.Start(ctx, userMessage, ""); err != nil {
+				_ = h.sendRemaining()
 				h.stopAllTimers()
 				return fmt.Errorf("failed to start claude (retry): %w", err)
 			}
@@ -147,6 +152,13 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 			if err := h.claudeManager.WaitForExit(); err != nil {
 				h.logger.Printf("Claude exited with error (retry): %v", err)
 			}
+
+			// retry 分支也统一发送
+			h.logger.Printf("Process exited (retry), sending remaining buffer...")
+			if err := h.sendRemaining(); err != nil {
+				h.logger.Printf("Failed to send remaining (retry): %v", err)
+			}
+			h.stopAllTimers() // retry 分支发送完成后停止定时器
 		}
 	}
 	h.stopAllTimers()
@@ -154,6 +166,13 @@ func (h *StreamingTextHandler) HandleMessage(ctx context.Context, token, receive
 	if err := h.claudeManager.WaitForExit(); err != nil {
 		h.logger.Printf("Claude exited with error: %v", err)
 	}
+
+	// 进程退出后，统一发送缓冲区剩余内容（只发送一次）
+	h.logger.Printf("Process exited, sending remaining buffer...")
+	if err := h.sendRemaining(); err != nil {
+		h.logger.Printf("Failed to send remaining: %v", err)
+	}
+	h.stopAllTimers() // 最终发送完成后停止定时器
 
 	h.lastSessionID = h.claudeManager.GetSessionID()
 	h.logger.Printf("Message processing completed, session_id=%s", h.lastSessionID)
@@ -202,13 +221,10 @@ func (h *StreamingTextHandler) onTextDelta(text string) error {
 		h.bufferMu.Lock()
 	}
 
-	// 如果缓冲区为空（刚被清空），启动持续时间定时器
-	if len(h.buffer) > 0 && len(h.buffer) == len([]rune(text))-h.lastFullLen+len(h.buffer) {
+	// 如果缓冲区不为空且持续时间定时器未启动，启动持续时间定时器
+	if len(h.buffer) > 0 && h.durationTimer == nil {
 		h.startDurationTimer()
 	}
-
-	// 重置空闲超时定时器
-	h.resetIdleTimer()
 
 	return nil
 }
@@ -246,26 +262,21 @@ func (h *StreamingTextHandler) startDurationTimer() {
 	}()
 }
 
-// resetIdleTimer 重置空闲超时定时器
-func (h *StreamingTextHandler) resetIdleTimer() {
-	if h.idleTimer != nil {
-		h.idleTimer.Stop()
-	}
-
-	h.idleTimer = time.NewTimer(h.idleTimeout)
-
+// runIdleTimerGoroutine 启动空闲定时器 goroutine（只启动一次）
+func (h *StreamingTextHandler) runIdleTimerGoroutine() {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
+		timer := time.NewTimer(h.idleTimeout)
 
-		select {
-		case <-h.idleTimer.C:
-			// 检查是否有新数据到达
-			idleTime := time.Since(h.lastDataTime)
-			if idleTime >= h.idleTimeout {
-				h.logger.Printf("[IdleTimer] Idle timeout %v reached, sending buffer", h.idleTimeout)
+		for {
+			select {
+			case <-timer.C:
+				// 检查是否有新数据到达
 				h.bufferMu.Lock()
-				if len(h.buffer) > 0 {
+				idleTime := time.Since(h.lastDataTime)
+				if idleTime >= h.idleTimeout && len(h.buffer) > 0 {
+					h.logger.Printf("[IdleTimer] Idle timeout %v reached, sending buffer", h.idleTimeout)
 					chunk := string(h.buffer)
 					h.buffer = make([]rune, 0)
 					h.bufferMu.Unlock()
@@ -273,13 +284,18 @@ func (h *StreamingTextHandler) resetIdleTimer() {
 					if err := h.sendMessage(chunk); err != nil {
 						h.logger.Printf("[IdleTimer] Failed to send: %v", err)
 					}
+					// 只在发送后重置定时器
+					timer.Reset(h.idleTimeout)
 				} else {
 					h.bufferMu.Unlock()
+					// 没有发送，继续等待
+					timer.Reset(h.idleTimeout)
 				}
+			case <-h.stopTimers:
+				h.logger.Printf("[IdleTimer] Stopped")
+				timer.Stop()
+				return
 			}
-		case <-h.stopTimers:
-			h.logger.Printf("[IdleTimer] Stopped")
-			return
 		}
 	}()
 }

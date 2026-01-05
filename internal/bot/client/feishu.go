@@ -13,33 +13,24 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
-	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 // FeishuClient 飞书客户端封装
 type FeishuClient struct {
-	client             *lark.Client
-	config             FeishuConfig
-	httpClient         *http.Client
-	tenantAccessToken  string
-	tokenExpireTime    time.Time
-	tokenMutex         sync.RWMutex
+	client            *lark.Client
+	httpClient        *http.Client
+	appID             string
+	appSecret         string
+	tenantAccessToken string
+	tokenExpireTime   time.Time
+	tokenMutex        sync.RWMutex
 }
 
 // FeishuConfig 飞书配置
 type FeishuConfig struct {
 	AppID     string
 	AppSecret string
-	CardTemplates CardTemplates
-}
-
-// CardTemplates 卡片模板配置
-type CardTemplates struct {
-	TaskCompleted string // 任务完成卡片模板ID
-	TaskWaiting   string // 等待输入卡片模板ID
-	CommandResult string // 命令结果卡片模板ID
-	SessionList   string // 会话列表卡片模板ID
 }
 
 // NewFeishuClient 创建飞书客户端
@@ -48,201 +39,11 @@ func NewFeishuClient(config FeishuConfig) *FeishuClient {
 
 	return &FeishuClient{
 		client:          client,
-		config:          config,
 		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		appID:           config.AppID,
+		appSecret:       config.AppSecret,
 		tokenExpireTime: time.Now(), // 初始化为过去时间，强制首次获取 token
 	}
-}
-
-// CardData 卡片数据
-type CardData struct {
-	Token       string                 `json:"token"`
-	ProjectName string                 `json:"project_name"`
-	Description string                 `json:"description"`
-	Status      string                 `json:"status"`
-	Timestamp   string                 `json:"timestamp"`
-	UserID      string                 `json:"user_id"`
-	OpenID      string                 `json:"open_id"`
-	Extra       map[string]interface{} `json:"extra,omitempty"`
-}
-
-// SendTaskCompletedCard 发送任务完成卡片
-func (fc *FeishuClient) SendTaskCompletedCard(openID string, cardData interface{}) error {
-	var data map[string]interface{}
-	
-	// 尝试不同的类型转换
-	switch v := cardData.(type) {
-	case *CardData:
-		data = map[string]interface{}{
-			"token":        v.Token,
-			"project_name": v.ProjectName,
-			"description":  v.Description,
-			"timestamp":    v.Timestamp,
-			"status":       v.Status,
-			"open_id":      v.OpenID,
-		}
-	case map[string]interface{}:
-		data = v
-	default:
-		return fmt.Errorf("invalid card data type")
-	}
-	card := &callback.Card{
-		Type: "template",
-		Data: &callback.TemplateCard{
-			TemplateID: fc.config.CardTemplates.TaskCompleted,
-			TemplateVariable: map[string]interface{}{
-				"token":        data["token"],
-				"project_name": data["project_name"],
-				"description":  data["description"],
-				"timestamp":    data["timestamp"],
-				"status":       "completed",
-				"open_id":      data["open_id"],
-			},
-		},
-	}
-
-	return fc.sendCard(openID, card)
-}
-
-// SendTaskWaitingCard 发送等待输入卡片
-func (fc *FeishuClient) SendTaskWaitingCard(openID string, cardData interface{}) error {
-	var data map[string]interface{}
-	
-	// 尝试不同的类型转换
-	switch v := cardData.(type) {
-	case *CardData:
-		data = map[string]interface{}{
-			"token":        v.Token,
-			"project_name": v.ProjectName,
-			"description":  v.Description,
-			"timestamp":    v.Timestamp,
-			"status":       v.Status,
-			"open_id":      v.OpenID,
-		}
-	case map[string]interface{}:
-		data = v
-	default:
-		return fmt.Errorf("invalid card data type")
-	}
-	card := &callback.Card{
-		Type: "template",
-		Data: &callback.TemplateCard{
-			TemplateID: fc.config.CardTemplates.TaskWaiting,
-			TemplateVariable: map[string]interface{}{
-				"token":        data["token"],
-				"project_name": data["project_name"],
-				"description":  data["description"],
-				"timestamp":    data["timestamp"],
-				"status":       "waiting",
-				"open_id":      data["open_id"],
-			},
-		},
-	}
-
-	return fc.sendCard(openID, card)
-}
-
-// SendCommandResultCard 发送命令执行结果卡片
-func (fc *FeishuClient) SendCommandResultCard(openID string, token, command, result string, success bool) error {
-	status := "success"
-	if !success {
-		status = "failed"
-	}
-
-	card := &callback.Card{
-		Type: "template",
-		Data: &callback.TemplateCard{
-			TemplateID: fc.config.CardTemplates.CommandResult,
-			TemplateVariable: map[string]interface{}{
-				"token":   token,
-				"command": command,
-				"result":  result,
-				"status":  status,
-				"open_id": openID,
-			},
-		},
-	}
-
-	return fc.sendCard(openID, card)
-}
-
-// SendTextMessage 发送文本消息
-func (fc *FeishuClient) SendTextMessage(openID, text string) error {
-	// 按照飞书文本消息格式要求，内容必须是 JSON 字符串
-	textContent := map[string]string{"text": text}
-	content, err := json.Marshal(textContent)
-	if err != nil {
-		return fmt.Errorf("failed to marshal text content: %w", err)
-	}
-
-	token, err := fc.GetTenantAccessToken()
-	if err != nil {
-		return err
-	}
-	
-	resp, err := fc.client.Im.Message.Create(context.Background(), larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType("open_id").
-		Body(larkim.NewCreateMessageReqBodyBuilder().
-			MsgType("text").
-			ReceiveId(openID).
-			Content(string(content)).
-			Build()).
-		Build(), larkcore.WithTenantAccessToken(token))
-
-	if err != nil {
-		return err
-	}
-
-	if !resp.Success() {
-		return &FeishuError{
-			Code:      resp.Code,
-			Message:   resp.Msg,
-			RequestID: resp.RequestId(),
-		}
-	}
-
-	return nil
-}
-
-// SendInteractiveMessage 发送交互式消息
-func (fc *FeishuClient) SendInteractiveMessage(openID string, card *callback.Card) error {
-	return fc.sendCard(openID, card)
-}
-
-// sendCard 发送卡片的通用方法
-func (fc *FeishuClient) sendCard(openID string, card *callback.Card) error {
-	content, err := json.Marshal(card)
-	if err != nil {
-		return err
-	}
-
-	token, err := fc.GetTenantAccessToken()
-	if err != nil {
-		return err
-	}
-
-	resp, err := fc.client.Im.Message.Create(context.Background(), larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType("open_id").
-		Body(larkim.NewCreateMessageReqBodyBuilder().
-			MsgType("interactive").
-			ReceiveId(openID).
-			Content(string(content)).
-			Build()).
-		Build(), larkcore.WithTenantAccessToken(token))
-
-	if err != nil {
-		return err
-	}
-
-	if !resp.Success() {
-		return &FeishuError{
-			Code:      resp.Code,
-			Message:   resp.Msg,
-			RequestID: resp.RequestId(),
-		}
-	}
-
-	return nil
 }
 
 // GetClient 获取原始客户端（用于高级操作）
@@ -297,10 +98,10 @@ func (fc *FeishuClient) GetTenantAccessToken() (string, error) {
 	}
 
 	reqData := tokenReq{
-		AppID:     fc.config.AppID,
-		AppSecret: fc.config.AppSecret,
+		AppID:     fc.appID,
+		AppSecret: fc.appSecret,
 	}
-	log.Printf("[FeishuClient] tenant token request: app_id=%s app_secret=%s at=%s", fc.config.AppID, fc.config.AppSecret, time.Now().Format(time.RFC3339))
+	log.Printf("[FeishuClient] tenant token request: app_id=%s app_secret=%s at=%s", fc.appID, fc.appSecret, time.Now().Format(time.RFC3339))
 
 	jsonData, err := json.Marshal(reqData)
 	if err != nil {
@@ -393,36 +194,4 @@ func (fc *FeishuClient) SendMessage(receiveID, receiveIDType, content string) er
 		receiveID, receiveIDType, len(content), *resp.Data.MessageId)
 
 	return nil
-}
-
-// GetChatName 获取群聊名称
-func (fc *FeishuClient) GetChatName(chatID string) (string, error) {
-	token, err := fc.GetTenantAccessToken()
-	if err != nil {
-		return "", err
-	}
-
-	// 调用飞书 API 获取群聊信息
-	resp, err := fc.client.Im.Chat.Get(context.Background(), larkim.NewGetChatReqBuilder().
-		ChatId(chatID).
-		Build(), larkcore.WithTenantAccessToken(token))
-
-	if err != nil {
-		return "", fmt.Errorf("failed to get chat info: %w", err)
-	}
-
-	if !resp.Success() {
-		return "", &FeishuError{
-			Code:      resp.Code,
-			Message:   resp.Msg,
-			RequestID: resp.RequestId(),
-		}
-	}
-
-	// 返回群聊名称
-	if resp.Data != nil && resp.Data.Name != nil {
-		return *resp.Data.Name, nil
-	}
-
-	return "", fmt.Errorf("chat name is empty")
 }
