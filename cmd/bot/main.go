@@ -7,6 +7,7 @@ import (
 	"feishu-bot/internal/bot/handlers"
 	"feishu-bot/internal/notification"
 	"feishu-bot/internal/project"
+	"feishu-bot/internal/utils"
 	"fmt"
 	"log"
 	"os"
@@ -320,14 +321,16 @@ func appendEventTrace(tag string, ev *larkim.P2MessageReceiveV1) {
 }
 
 func writeTraceLine(line string) {
-	file, err := os.OpenFile("/tmp/feishu-event-trace.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	traceLogPath := utils.GetTempFilePath("feishu-event-trace.log")
+	file, err := os.OpenFile(traceLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		_, _ = file.WriteString(line)
 		_ = file.Close()
 		return
 	}
-	_ = os.WriteFile("/tmp/feishu-event-trace.err", []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
-	_ = os.WriteFile("/tmp/feishu-event-trace.log", []byte(line), 0644)
+	errorLogPath := utils.GetTempFilePath("feishu-event-trace.err")
+	_ = os.WriteFile(errorLogPath, []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
+	_ = os.WriteFile(traceLogPath, []byte(line), 0644)
 }
 
 // sendWelcomeMessage 发送欢迎消息

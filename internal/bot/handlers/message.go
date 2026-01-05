@@ -8,7 +8,7 @@ import (
 	"feishu-bot/internal/command"
 	"feishu-bot/internal/notification"
 	"feishu-bot/internal/project"
-	"feishu-bot/internal/session"
+	"feishu-bot/internal/utils"
 	"fmt"
 	"log"
 	"os"
@@ -56,7 +56,7 @@ func NewMessageHandler(
 func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	appendP2PTrace(event, "handler_enter")
 	mh.logger.Printf("Received P2P message: %s", larkcore.Prettify(event))
-	_ = os.WriteFile("/tmp/feishu-last-p2p-event.json", []byte(larkcore.Prettify(event)), 0644)
+	_ = os.WriteFile(utils.GetTempFilePath("feishu-last-p2p-event.json"), []byte(larkcore.Prettify(event)), 0644)
 
 	// 安全检查防止 nil 指针 - 只检查必需的字段
 	if event == nil || event.Event == nil || event.Event.Sender == nil ||
@@ -105,7 +105,7 @@ func (mh *MessageHandler) HandleP2PMessage(ctx context.Context, event *larkim.P2
 // HandleGroupMessage 处理群聊消息
 func (mh *MessageHandler) HandleGroupMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	mh.logger.Printf("Received GROUP message: %s", larkcore.Prettify(event))
-	_ = os.WriteFile("/tmp/feishu-last-group-event.json", []byte(larkcore.Prettify(event)), 0644)
+	_ = os.WriteFile(utils.GetTempFilePath("feishu-last-group-event.json"), []byte(larkcore.Prettify(event)), 0644)
 
 	// 安全检查防止 nil 指针
 	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.ChatId == nil {
@@ -269,14 +269,16 @@ func appendP2PTrace(event *larkim.P2MessageReceiveV1, tag string) {
 }
 
 func writeTraceLine(line string) {
-	file, err := os.OpenFile("/tmp/feishu-event-trace.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	traceLogPath := utils.GetTempFilePath("feishu-event-trace.log")
+	file, err := os.OpenFile(traceLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		_, _ = file.WriteString(line)
 		_ = file.Close()
 		return
 	}
-	_ = os.WriteFile("/tmp/feishu-event-trace.err", []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
-	_ = os.WriteFile("/tmp/feishu-event-trace.log", []byte(line), 0644)
+	errorLogPath := utils.GetTempFilePath("feishu-event-trace.err")
+	_ = os.WriteFile(errorLogPath, []byte(fmt.Sprintf("%s open_error=%v\n", time.Now().Format(time.RFC3339), err)), 0644)
+	_ = os.WriteFile(traceLogPath, []byte(line), 0644)
 }
 
 func (mh *MessageHandler) getClaudeSession(openID string) string {
@@ -449,21 +451,6 @@ func (mh *MessageHandler) isMentioned(message *larkim.EventMessage) bool {
 	return len(message.Mentions) > 0
 }
 
-// getStatusEmoji 获取状态对应的emoji
-func (mh *MessageHandler) getStatusEmoji(status string) string {
-	switch status {
-	case session.StatusActive:
-		return "🟢"
-	case session.StatusCompleted:
-		return "✅"
-	case session.StatusWaiting:
-		return "⏳"
-	case session.StatusExpired:
-		return "⚪"
-	default:
-		return "❓"
-	}
-}
 
 // sendTextMessage 发送文本消息的便捷方法
 func (mh *MessageHandler) sendTextMessage(openID, text string) error {
@@ -496,7 +483,7 @@ func (mh *MessageHandler) sendHelpMessage(openID string) error {
 // handleStreamingChat 处理流式对话请求
 func (mh *MessageHandler) handleStreamingChat(openID, userID, receiveID, receiveIDType, question string) error {
 	mh.logger.Printf("[DEBUG] handleStreamingChat called with: openID=%s userID=%s receiveID=%s receiveIDType=%s question=%s", openID, userID, receiveID, receiveIDType, question)
-	_ = os.WriteFile("/tmp/feishu-last-streaming.txt", []byte(fmt.Sprintf("receive_id_type=%s receive_id=%s", receiveIDType, receiveID)), 0644)
+	_ = os.WriteFile(utils.GetTempFilePath("feishu-last-streaming.txt"), []byte(fmt.Sprintf("receive_id_type=%s receive_id=%s", receiveIDType, receiveID)), 0644)
 
 	// 获取 tenant_access_token
 	token, err := mh.feishuClient.GetTenantAccessToken()
