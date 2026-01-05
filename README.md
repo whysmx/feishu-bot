@@ -1,410 +1,160 @@
 # 飞书 Claude CLI 流式对话机器人
 
-基于飞书平台和 Claude CLI 的智能对话机器人，支持流式输出和打字机效果。
+通过飞书长连接接收消息，调用本地 Claude CLI，并将 Claude 的输出按段发送为文本消息。
 
-## 项目概述
+## 功能概览
 
-通过集成 Claude CLI 和飞书 CardKit 2.0，实现实时流式对话的飞书机器人：
-
-- 🤖 **Claude CLI 集成**：使用本地 Claude CLI 进行对话
-- ⚡ **流式输出**：实时显示 AI 回复，打字机效果
-- 💬 **CardKit 2.0**：使用飞书卡片展示对话内容
-- 🔌 **WebSocket 长连接**：实时接收用户消息
-- 📝 **Markdown 支持**：支持格式化文本和代码高亮
+- **Claude CLI 集成**：默认使用 `claude` 命令（可通过 `CLAUDE_CLI_PATH` 指定路径）
+- **流式文本输出**：基于空闲超时/持续时间/最大缓冲区分段发送，避免超过飞书消息大小限制
+- **会话管理**：P2P 按用户维持会话，群聊使用全局共享会话
+- **群聊指令**：@ 机器人后支持 `ls` / `bind` / `help`（项目路径绑定）
+- **长连接**：使用飞书 WebSocket 事件订阅接收消息
 
 ## 技术栈
 
-- **语言**：Go 1.22.6
+- **语言**：Go 1.22.x
 - **飞书 SDK**：`github.com/larksuite/oapi-sdk-go/v3`
-- **Claude CLI**：本地进程调用（使用 `cc1` 命令）
-- **通信方式**：WebSocket 长连接
-- **卡片展示**：CardKit v1 + JSON 2.0 Schema
+- **Claude CLI**：本地 `claude` 命令（`--output-format stream-json`）
+- **通信方式**：飞书长连接 WebSocket
 
 ## 项目结构
 
 ```
 ./
 ├── cmd/
-│   └── bot/                      # 主程序入口
-│       └── main.go
+│   └── bot/                  # 主程序入口
 ├── internal/
-│   ├── bot/
-│   │   ├── client/               # 飞书客户端封装
-│   │   │   └── feishu.go
-│   │   └── handlers/             # 消息处理器
-│   │       └── message.go
-│   ├── claude/                   # Claude CLI 集成
-│   │   ├── manager.go            # CLI 进程管理
-│   │   └── streaming_text_handler.go  # 流式文本处理
-│   ├── config/                   # 配置管理
-│   │   └── chat_config.go        # 聊天配置（项目绑定）
-│   └── utils/                    # 工具函数
-│       ├── paths.go
-│       └── timeout.go
-├── configs/                      # 配置文件目录
-│   └── chat_config.json          # 聊天配置（自动生成）
-├── scripts/                      # 部署脚本
-│   ├── start-bot.sh
-│   ├── stop-bot.sh
-│   └── restart-bot.sh
-├── .env                          # 环境变量
-├── .env.example                  # 配置示例
-├── go.mod
-└── Makefile
+│   ├── bot/                  # 飞书客户端与消息处理
+│   ├── claude/               # Claude CLI 管理与流式处理
+│   ├── config/               # 项目绑定配置
+│   └── utils/                # 工具函数（超时、路径）
+├── configs/
+│   └── chat_config.json      # 群聊绑定配置（运行时会更新）
+├── scripts/                  # 启停脚本（macOS/Linux/Windows）
+├── docs/                     # 设计/测试文档
+├── .env.example              # 环境变量示例
+└── README.md
 ```
-
-## 核心功能
-
-### 1. 流式文本对话
-- 调用本地 Claude CLI (`cc1` 命令)
-- 解析 `stream-json` 格式输出
-- 实时提取文本增量
-- 智能分段发送（空闲超时 + 最大持续时间）
-
-### 2. 消息处理
-- WebSocket 长连接接收消息
-- 支持单聊（P2P）和群聊
-- 群聊需要 @机器人 触发
-- 自动回复，无需命令前缀
 
 ## 快速开始
 
-### 1. 环境准备
+### 1. 依赖
 
-确保已安装：
-- Go 1.22.6+
-- Claude CLI（配置为 `cc1` 别名）
+- Go 1.22+
+- Claude CLI（确保 `claude` 在 PATH 中，或设置 `CLAUDE_CLI_PATH`）
+- Anthropic API Key 与 Auth Token
 
 ### 2. 配置飞书应用
 
-1. 访问 [飞书开放平台](https://open.feishu.cn/app)
-2. 创建自建应用，获取 App ID 和 App Secret
-3. 配置权限：
-   - `im:message` - 获取与发送消息
-   - `im:message:group_at_msg` - 群聊 @消息
-   - `im:chat` - 访问群聊信息
-   - `cardkit:card:write` - 创建与更新卡片
-4. 配置事件订阅：
-   - 选择"使用长连接接收事件"
-   - 添加事件：`im.message.receive_v1`
+1. 访问 [飞书开放平台](https://open.feishu.cn/app) 创建企业自建应用
+2. 记录 App ID / App Secret
+3. 开启权限（实际用到）：
+   - `im:message`（收发消息）
+   - `im:message.group_at_msg`（群聊 @ 消息）
+4. 事件订阅：选择**长连接**并添加 `im.message.receive_v1`
 
-### 3. 配置项目
+### 3. 配置环境变量
 
 ```bash
-# 复制环境变量模板
 cp .env.example .env
-
-# 编辑 .env 文件
-FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-FEISHU_APP_SECRET=your_app_secret
 ```
 
-### 4. 运行机器人
+> 必填项请根据 `.env.example` 填写。
+
+### 4. 运行
 
 ```bash
-# 安装依赖
-go mod download
+# 直接运行
+go run ./cmd/bot
 
-# 运行机器人
-go run cmd/bot/main.go
+# 或构建后运行
+make build
+./scripts/start-bot.sh
 ```
 
 ## 使用方法
 
-### 发起对话
+### 私聊（P2P）
 
-在飞书群聊或私聊中：
+直接发送消息即可触发 Claude 对话；会话会按用户维持。
+
+### 群聊
+
+- 普通消息会被转发给 Claude
+- **@机器人**后可使用指令（不会转发给 Claude）：
 
 ```
-@机器人 你的问题
+@机器人 ls
+@机器人 bind 3
+@机器人 help
 ```
 
-机器人会：
-1. 创建一个新的对话卡片
-2. 显示"思考中..."
-3. 逐字显示 AI 回复（打字机效果）
+## 群聊指令
 
-### 特殊命令（群聊专用）
-
-在群聊中 @机器人 时，可以使用以下特殊命令（不转发给 Claude CLI）：
-
-#### 1. ls 命令 - 列出项目目录
+### 1) ls：列出基础目录
 
 ```
 @机器人 ls
 ```
 
-**功能**：列出基础目录下所有可绑定的项目目录
+列出 `BASE_DIR` 下可绑定的项目目录，并显示当前绑定。
 
-**示例输出**：
-```
-📂 基础目录: /Users/wen/Desktop/code/
-
-可绑定项目目录：
-1. 01frp
-2. 02v0.dev
-3. 18feishu
-...
-
-共 33 个目录
-使用命令: bind <序号>
-
-✅ 当前绑定: /Users/wen/Desktop/code/18feishu
-```
-
-#### 2. bind 命令 - 绑定项目路径
+### 2) bind：绑定项目路径
 
 ```
 @机器人 bind <序号>
 ```
 
-**功能**：将当前群聊绑定到指定项目目录，Claude CLI 会在该目录下启动
+将群聊绑定到指定项目目录。绑定后 Claude CLI 会以该目录作为工作目录启动。
 
-**示例**：
-```
-@机器人 bind 18
-```
-
-**输出**：
-```
-✅ 已绑定项目路径: /Users/wen/Desktop/code/18feishu
-（配置已保存）
-```
-
-**说明**：
-- 绑定后，Claude CLI 会以该项目目录作为工作目录启动
-- 可以访问项目内的所有文件
-- 配置会持久化保存到 `configs/chat_config.json`
-- 机器人重启后绑定关系保持不变
-
-#### 3. help 命令 - 显示帮助
+### 3) help：查看指令
 
 ```
 @机器人 help
 ```
 
-**功能**：显示命令帮助信息和当前绑定状态
-
-**示例输出**：
-```
-🤖 飞书 Claude CLI 机器人命令说明
-
-特殊命令：
-• ls - 列出可绑定的项目目录
-• bind <序号> - 绑定群聊到指定项目路径
-• help - 显示此帮助信息
-
-使用示例：
-@机器人 ls
-@机器人 bind 18
-@机器人 help
-
-注意：
-- 特殊命令仅在群聊中有效
-- 绑定后配置会持久化保存
-- 其他消息将转发给 Claude 处理
-
-✅ 当前绑定: /Users/wen/Desktop/code/18feishu
-```
-
-### 配置基础目录
-
-基础目录（用于 ls 命令扫描项目）可以通过以下方式配置（优先级从高到低）：
-
-**方式 1：环境变量（推荐）**
-
-编辑 `.env` 文件：
-```bash
-BASE_DIR=/Users/wen/Desktop/code/
-```
-
-**方式 2：配置文件**
-
-编辑 `configs/chat_config.json`：
-```json
-{
-  "base_dir": "/Users/wen/Desktop/code/",
-  "project_paths": {}
-}
-```
-
-**方式 3：默认值**
-
-如果未配置，默认使用：`/Users/wen/Desktop/code/`
-
-### 配置文件说明
-
-绑定信息保存在 `configs/chat_config.json`：
-
-```json
-{
-  "base_dir": "/Users/wen/Desktop/code/",
-  "project_paths": {
-    "oc_xxxxxxxxx": "/Users/wen/Desktop/code/18feishu",
-    "oc_yyyyyyyyy": "/Users/wen/Desktop/code/other-project"
-  }
-}
-```
-
-- `base_dir`: 基础目录，用于扫描可绑定的项目
-- `project_paths`: 群聊 ID 到项目路径的映射关系
-- 配置文件已加入 `.gitignore`，不会被提交到 Git
-
-### 示例对话
-
-```
-用户: @机器人 如何用 Go 实现 HTTP 服务器？
-
-机器人: [创建卡片]
-      [流式更新内容]
-      在 Go 中，可以使用标准库的 net/http 包...
-```
-
-### 使用场景示例
-
-**场景 1：多项目管理**
-
-```
-# 开发团队 A 的群聊
-@机器人 bind 1    # 绑定到 project-a
-@机器人 帮我重构这个函数  # Claude 在 project-a 目录下工作
-
-# 开发团队 B 的群聊
-@机器人 bind 2    # 绑定到 project-b
-@机器人 写个单元测试  # Claude 在 project-b 目录下工作
-```
-
-**场景 2：快速查看项目**
-
-```
-@机器人 ls        # 查看所有可绑定项目
-@机器人 bind 18   # 绑定到 18feishu 项目
-@机器人 列出当前目录的文件  # Claude 访问 18feishu 项目
-```
-
-## 技术实现
-
-### Claude CLI 集成
-
-```go
-// 启动 Claude CLI 进程
-cmd := exec.Command("cc1",
-    "-p",                                // 非交互模式
-    "--output-format", "stream-json",    // 流式 JSON 输出
-    "--include-partial-messages",        // 包含部分消息
-)
-
-// 解析流式输出
-// {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"text": "..."}}}
-```
-
-### CardKit 流式更新
-
-```go
-// 1. 创建卡片实体
-POST /open-apis/cardkit/v1/cards
-
-// 2. 发送卡片到群聊
-POST /open-apis/im/v1/messages
-
-// 3. 流式更新卡片内容（限流 100ms）
-PUT /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content
-```
-
-### WebSocket 长连接
-
-```go
-wsClient := larkws.NewClient(appID, appSecret,
-    larkws.WithEventHandler(eventHandler),
-    larkws.WithLogLevel(larkcore.LogLevelInfo),
-)
-wsClient.Start(context.Background())
-```
+显示指令列表与当前绑定。
 
 ## 配置说明
 
 ### 环境变量
 
-| 变量名 | 说明 | 示例 |
-|--------|------|------|
-| `FEISHU_APP_ID` | 飞书应用 ID | `cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `FEISHU_APP_SECRET` | 飞书应用密钥 | `Y0psnqB52LC50Svx...` |
-| `BASE_DIR` | 基础项目目录（用于 ls 和 bind 命令） | `/Users/wen/Desktop/code/` |
-| `GROUP_REQUIRE_MENTION` | 群聊是否必须@机器人（默认 false） | `false` |
+| 变量名 | 必需 | 说明 | 默认值 |
+|--------|------|------|--------|
+| `FEISHU_APP_ID` | 是 | 飞书 App ID | - |
+| `FEISHU_APP_SECRET` | 是 | 飞书 App Secret | - |
+| `ANTHROPIC_API_KEY` | 是 | Anthropic API Key | - |
+| `ANTHROPIC_AUTH_TOKEN` | 是 | Anthropic Auth Token | - |
+| `ANTHROPIC_BASE_URL` | 否 | Anthropic API Base URL | `https://api.anthropic.com` |
+| `CLAUDE_CLI_PATH` | 否 | Claude CLI 路径 | `claude` |
+| `BASE_DIR` | 否 | `ls/bind` 的基础目录 | `/Users/wen/Desktop/code/` |
+| `LOG_LEVEL` | 否 | 日志级别 | `info` |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | 否 | Claude Code 流量开关 | `true` |
+| `CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL` | 否 | Claude Code 读取工具开关 | `true` |
 
-### CardKit 打字机效果
+### 群聊绑定配置
 
-```json
-{
-  "config": {
-    "streaming_mode": true,
-    "streaming_config": {
-      "print_frequency_ms": {"default": 70},
-      "print_step": {"default": 1},
-      "print_strategy": "fast"
-    }
-  }
-}
-```
+- 文件：`configs/chat_config.json`
+- 运行时会自动读取/写入
+- 未配置时会自动生成，并使用默认 `base_dir`
 
-## 开发状态
+### 流式输出分段参数
 
-✅ 已完成：
-- [x] Claude CLI 进程管理
-- [x] Stream-JSON 解析器
-- [x] CardKit 流式更新（限流 10 QPS）
-- [x] 飞书消息处理集成
-- [x] WebSocket 长连接
-- [x] 直接消息触发对话（无需 /chat）
-- [x] 打字机效果
+分段策略由 `internal/utils/timeout.go` 统一配置：
 
-⏳ 调试中：
-- [ ] 飞书平台事件订阅配置
+- `StreamIdleTimeout`：空闲多久发送一次缓冲内容
+- `StreamMaxDuration`：连续输出超过多久强制分段
+- `StreamMaxBufferSize`：缓冲区最大字符数
 
-## 常见问题
+## 日志与排查
 
-### 1. 平台显示"应用未建立长连接"
-
-**症状**：机器人日志显示 `connected`，但飞书平台显示未建立长连接
-
-**解决方案**：
-1. 即使提示未建立连接，也强制保存事件订阅配置
-2. 重启机器人
-3. 等待 2-3 分钟刷新页面
-4. 或直接在群里测试，看是否能收到消息
-
-### 2. 机器人无响应
-
-**检查清单**：
-- [ ] 机器人进程是否运行
-- [ ] WebSocket 日志是否显示 `connected`
-- [ ] 事件订阅是否配置成功
-- [ ] 权限是否已开启
-
-### 3. CardKit 更新失败
-
-**可能原因**：
-- 超过 10 QPS 限流
-- token 过期
-- card_id 或 element_id 错误
-
-## 日志查看
-
-```bash
-# 查看机器人日志
-tail -f /tmp/feishu-bot.log
-
-# 搜索错误
-grep "ERROR" /tmp/feishu-bot.log
-
-# 检查 WebSocket 连接
-grep "connected" /tmp/feishu-bot.log
-```
+- `LOG_LEVEL=debug` 可开启更详细日志
+- 使用脚本启动时，日志默认写入 `/tmp/feishu-bot-latest.log`（可用 `LOG_FILE` 覆盖）
+- 运行时会在系统临时目录输出最近事件快照（如 `feishu-last-*.json`、`feishu-event-trace.log`）
 
 ## 相关资源
 
 - [飞书开放平台文档](https://open.feishu.cn/document)
-- [CardKit 2.0 指南](https://open.feishu.cn/document/common-capabilities/message-card/card-components)
 - [Claude CLI 文档](https://docs.anthropic.com/claude-cli/overview)
 - [飞书 Go SDK](https://github.com/larksuite/oapi-sdk-go)
 

@@ -61,30 +61,18 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com  # API 基础 URL
 
 以下路径需要修改为 Windows 风格：
 
-#### 3.1 会话存储文件
+#### 3.1 基础目录（用于 ls/bind）
 
 ```bash
 # .env 文件
-SESSION_STORAGE_FILE=data\sessions.json
+BASE_DIR=C:\Users\YourName\projects
 ```
 
 **说明**：
-- 相对路径：`data\sessions.json`（相对于可执行文件目录）
-- 或绝对路径：`C:\feishu-bot\data\sessions.json`
+- 作为群聊 `ls/bind` 的扫描目录
+- 可使用绝对路径或磁盘盘符路径
 
-#### 3.2 项目配置文件
-
-```bash
-# .env 文件
-PROJECT_CONFIG_FILE=C:\Users\YourName\.feishu-bot\projects.json
-```
-
-**Windows 路径规则**：
-- 用户主目录：`C:\Users\<用户名>\`
-- 配置目录：`C:\Users\<用户名>\.feishu-bot\`
-- 需要手动创建 `.feishu-bot` 目录
-
-#### 3.3 日志文件
+#### 3.2 日志文件
 
 ```bash
 # .env 文件
@@ -92,25 +80,12 @@ LOG_FILE=data\logs\bot.log
 ```
 
 **说明**：
-- 相对路径：`data\logs\bot.log`
+- 相对路径：`data\logs\bot.log`（相对于可执行文件目录）
 - 或绝对路径：`C:\feishu-bot\logs\bot.log`
 
 ---
 
-### 4. 服务器配置
-
-```bash
-# .env 文件
-PORT=8080
-```
-
-**说明**：
-- Windows 默认端口：8080
-- 确保防火墙允许该端口
-
----
-
-### 5. 日志级别
+### 4. 日志级别
 
 ```bash
 # .env 文件
@@ -125,35 +100,16 @@ LOG_LEVEL=info
 
 ---
 
-### 6. 群聊配置
+### 6. 基础目录配置（可选）
 
 ```bash
 # .env 文件
-GROUP_REQUIRE_MENTION=false
+BASE_DIR=C:\\Users\\YourName\\projects
 ```
 
 **说明**：
-- `false` - 群聊中@机器人才能触发对话（推荐）
-- `true` - 群聊中任意消息都会触发（测试用）
-
----
-
-### 7. CardKit 卡片模板 ID（可选）
-
-如果使用 CardKit 功能，需要配置卡片模板 ID：
-
-```bash
-# .env 文件
-TASK_COMPLETED_CARD_ID=AAqz1Y1QyEzLF
-TASK_WAITING_CARD_ID=AAqz1Y1p8y5Se
-COMMAND_RESULT_CARD_ID=AAqz1Y1TvQB25
-SESSION_LIST_CARD_ID=
-```
-
-**说明**：
-- 这些 ID 与飞书账号绑定
-- 新账号需要重新创建卡片模板
-- 如果不使用 CardKit，可以留空
+- `BASE_DIR` 用于 `ls/bind` 扫描项目目录
+- 未配置时使用默认值（代码内置）
 
 ---
 
@@ -190,28 +146,12 @@ notepad .env
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_AUTH_TOKEN`
 - `CLAUDE_CLI_PATH`（Windows 完整路径）
-- `PROJECT_CONFIG_FILE`（Windows 路径）
-- `SESSION_STORAGE_FILE`（Windows 路径）
+- `BASE_DIR`（可选，扫描目录）
+- `LOG_FILE`（可选，日志路径）
 
-### 3. 创建项目配置文件
+### 3. 确认配置目录可写
 
-```powershell
-# 创建配置目录
-mkdir C:\Users\$env:USERNAME\.feishu-bot
-
-# 创建 projects.json
-notepad C:\Users\$env:USERNAME\.feishu-bot\projects.json
-```
-
-**projects.json 示例**：
-```json
-{
-  "bindings": {
-    "oc_群聊ID1": "C:\\path\\to\\project1",
-    "oc_群聊ID2": "C:\\path\\to\\project2"
-  }
-}
-```
+`configs/chat_config.json` 会在首次运行时自动生成并写入绑定信息，无需手动创建。
 
 ### 4. 编译项目
 
@@ -316,24 +256,11 @@ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true
 CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL=true
 
 # ==================== 路径配置（Windows）====================
-SESSION_STORAGE_FILE=data\sessions.json
-PROJECT_CONFIG_FILE=C:\Users\YourName\.feishu-bot\projects.json
-LOG_FILE=data\logs\bot.log
-
-# ==================== 服务器配置 ====================
-PORT=8080
+LOG_FILE=data\\logs\\bot.log
+BASE_DIR=C:\\Users\\YourName\\projects
 
 # ==================== 日志配置 ====================
 LOG_LEVEL=info
-
-# ==================== 群聊配置 ====================
-GROUP_REQUIRE_MENTION=false
-
-# ==================== CardKit 配置（可选）====================
-TASK_COMPLETED_CARD_ID=
-TASK_WAITING_CARD_ID=
-COMMAND_RESULT_CARD_ID=
-SESSION_LIST_CARD_ID=
 ```
 
 ---

@@ -1,12 +1,10 @@
 # 服务器迁移部署指南
 
-本文档说明如何将飞书机器人迁移到新服务器并更换飞书账号。
+本文档说明如何将飞书机器人迁移到新服务器并更换飞书账号（当前实现为文本分段发送）。
 
 ## 前置准备
 
 ### 1. 新飞书应用配置
-
-在新的飞书开放平台创建应用：
 
 1. 访问 https://open.feishu.cn/app
 2. 创建新应用，记录以下信息：
@@ -15,9 +13,8 @@
 
 3. 配置应用权限：
    - `im:message` - 获取与发送消息
-   - `im:message:group_at_msg` - 群聊 @消息
-   - `im:chat` - 访问群聊信息
-   - `cardkit:card:write` - 创建与更新卡片
+   - `im:message.group_at_msg` - 群聊 @ 消息（用于命令）
+   - `im:chat` - 访问群聊信息（可选）
 
 4. 配置事件订阅：
    - 方式：WebSocket 长连接
@@ -28,8 +25,8 @@
 如果更换 Anthropic 账号：
 
 1. 访问 https://console.anthropic.com/
-2. 获取新的 API Key（格式：`sk-ant-xxxxx.xxxxx`）
-3. 记录 **API Key** 和 **Session Token**
+2. 获取新的 API Key
+3. 记录 **API Key** 与 **Auth Token**
 
 ### 3. 安装 Claude CLI
 
@@ -56,10 +53,7 @@ cd 18feishu
 ### 2. 创建配置文件
 
 ```bash
-# 复制示例配置
 cp .env.example .env
-
-# 编辑配置文件
 vim .env
 ```
 
@@ -71,20 +65,15 @@ vim .env
 # ==================== 飞书应用配置 ====================
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxx        # 新飞书应用的 App ID
 FEISHU_APP_SECRET=xxxxxx                 # 新飞书应用的 App Secret
-FEISHU_BASE_DOMAIN=https://open.feishu.cn
 
 # ==================== Claude CLI 配置 ====================
-# Anthropic API 配置（必需）
 ANTHROPIC_API_KEY=sk-ant-xxxxx.xxxxx     # 新账号的 API Key
-ANTHROPIC_AUTH_TOKEN=xxxxx                # 新账号的 Session Token
+ANTHROPIC_AUTH_TOKEN=xxxxx               # 新账号的 Auth Token
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 
 # Claude Code 特性开关（可选）
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true
 CLAUDE_CODE_ENABLE_UNIFIED_READ_TOOL=true
-
-# ==================== 服务器配置 ====================
-PORT=8080
 ```
 
 **可选配置**：
@@ -96,24 +85,18 @@ CLAUDE_CLI_PATH=/usr/local/bin/claude
 # 自定义日志文件路径
 LOG_FILE=/var/log/feishu-bot/bot.log
 
-# 会话存储文件
-SESSION_STORAGE_FILE=data/sessions.json
+# 群聊绑定扫描目录
+BASE_DIR=/data/projects/
 ```
 
-### 4. 创建必要目录
-
-```bash
-mkdir -p data logs configs/security
-```
-
-### 5. 构建项目
+### 4. 构建项目
 
 ```bash
 # 强制重新构建（清除缓存）
 go build -a -o bin/bot cmd/bot/main.go
 ```
 
-### 6. 测试运行
+### 5. 测试运行
 
 ```bash
 # 前台运行，查看日志
@@ -140,7 +123,7 @@ Starting WebSocket connection to Feishu...
 请在 .env 文件中配置这些变量
 ```
 
-### 7. 后台运行
+### 6. 后台运行
 
 ```bash
 # 使用启动脚本
@@ -151,7 +134,7 @@ nohup ./bin/bot > /tmp/feishu-bot.log 2>&1 &
 echo $! > /tmp/feishu-bot.pid
 ```
 
-### 8. 验证运行状态
+### 7. 验证运行状态
 
 ```bash
 # 检查进程
@@ -172,7 +155,6 @@ grep "connected" /tmp/feishu-bot-latest.log
 |---------|---------|------|------|
 | `FEISHU_APP_ID` | ✅ 必需 | 飞书应用 ID | `cli_xxxxxxxxxxxxxx` |
 | `FEISHU_APP_SECRET` | ✅ 必需 | 飞书应用密钥 | 从开放平台获取 |
-| `FEISHU_BASE_DOMAIN` | ❌ 可选 | 飞书 API 域名 | `https://open.feishu.cn` |
 
 ### Claude CLI 相关
 
@@ -180,16 +162,15 @@ grep "connected" /tmp/feishu-bot-latest.log
 |---------|---------|------|------|
 | `CLAUDE_CLI_PATH` | ❌ 可选 | Claude CLI 路径 | `claude` 或 `/usr/local/bin/claude` |
 | `ANTHROPIC_API_KEY` | ✅ 必需 | Anthropic API Key | `sk-ant-xxxxx.xxxxx` |
-| `ANTHROPIC_AUTH_TOKEN` | ✅ 必需 | Session Token | 从控制台获取 |
+| `ANTHROPIC_AUTH_TOKEN` | ✅ 必需 | Auth Token | 从控制台获取 |
 | `ANTHROPIC_BASE_URL` | ❌ 可选 | API 基础 URL | `https://api.anthropic.com` |
 
-### 服务器相关
+### 其他配置
 
 | 环境变量 | 是否必需 | 说明 | 默认值 |
 |---------|---------|------|--------|
-| `PORT` | ❌ 可选 | Webhook 端口 | `8080` |
 | `LOG_FILE` | ❌ 可选 | 日志文件路径 | `/tmp/feishu-bot-latest.log` |
-| `SESSION_STORAGE_FILE` | ❌ 可选 | 会话存储文件 | `data/sessions.json` |
+| `BASE_DIR` | ❌ 可选 | `ls/bind` 基础目录 | `/Users/wen/Desktop/code/` |
 
 ## 常见问题
 
@@ -198,117 +179,14 @@ grep "connected" /tmp/feishu-bot-latest.log
 **原因**：Claude CLI 未安装或路径不正确
 
 **解决方案**：
-```bash
-# 检查 Claude CLI 是否在 PATH 中
-which claude
+1. 运行 `claude --version` 确认可执行
+2. 配置 `CLAUDE_CLI_PATH` 指向实际路径
 
-# 如果不在，安装或指定路径
-export CLAUDE_CLI_PATH=/usr/local/bin/claude
-```
+### Q2: 收不到群聊消息
 
-### Q2: 配置验证失败
-
-**原因**：`.env` 文件中缺少必需的配置项
+**原因**：权限或事件订阅不完整，或平台仅推送 @ 消息
 
 **解决方案**：
-```bash
-# 检查 .env 文件是否存在
-ls -la .env
-
-# 确保配置了所有必需项
-grep -E "FEISHU_APP_ID|FEISHU_APP_SECRET|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN" .env
-```
-
-### Q3: WebSocket 连接失败
-
-**原因**：飞书 App ID 或 Secret 配置错误
-
-**解决方案**：
-```bash
-# 1. 验证 App ID 格式（应该以 cli_ 开头）
-grep FEISHU_APP_ID .env
-
-# 2. 检查日志中的错误信息
-grep -i "error\|fail" /tmp/feishu-bot-latest.log
-
-# 3. 在飞书开放平台检查应用配置
-# https://open.feishu.cn/app/<YOUR_APP_ID>/event
-```
-
-### Q4: 机器人收不到消息
-
-**原因**：
-1. 飞书事件未订阅
-2. 权限未配置
-3. 有多个机器人实例在运行
-
-**解决方案**：
-```bash
-# 1. 检查是否有多个实例
-ps aux | grep "./bin/bot"
-
-# 2. 停止所有旧实例
-./scripts/stop-bot.sh
-
-# 3. 检查飞书开放平台的事件推送状态
-# 访问：https://open.feishu.cn/app/<YOUR_APP_ID>/logs
-```
-
-## 安全建议
-
-### 1. 保护敏感信息
-
-```bash
-# 设置 .env 文件权限
-chmod 600 .env
-
-# 不要将 .env 提交到 Git
-echo ".env" >> .gitignore
-```
-
-### 2. 使用环境变量（生产环境）
-
-生产环境建议直接设置环境变量，而不是使用 `.env` 文件：
-
-```bash
-# systemd 服务文件示例
-[Service]
-Environment="FEISHU_APP_ID=cli_xxxxxxxxxxxxxx"
-Environment="FEISHU_APP_SECRET=xxxxxx"
-Environment="ANTHROPIC_API_KEY=sk-ant-xxxxx.xxxxx"
-Environment="ANTHROPIC_AUTH_TOKEN=xxxxx"
-ExecStart=/path/to/bin/bot
-```
-
-### 3. 定期更新密钥
-
-建议每 3-6 个月更换一次 API 密钥。
-
-## 迁移检查清单
-
-- [ ] 创建新飞书应用并获取 App ID 和 Secret
-- [ ] 获取新的 Anthropic API Key 和 Auth Token
-- [ ] 在新服务器安装 Claude CLI
-- [ ] 克隆代码到新服务器
-- [ ] 创建并配置 `.env` 文件
-- [ ] 创建必要目录（data、logs）
-- [ ] 构建项目（`go build -a`）
-- [ ] 测试运行（前台运行查看日志）
-- [ ] 后台运行
-- [ ] 在飞书中测试机器人（单聊和群聊）
-- [ ] 检查日志确认 WebSocket 连接成功
-- [ ] 设置开机自启动（可选）
-
-## 完成部署后
-
-1. **测试单聊**：在飞书中私聊机器人，发送测试消息
-2. **测试群聊**：将机器人加入群聊，@机器人测试
-3. **查看日志**：确认没有错误信息
-4. **监控运行**：观察一段时间确保稳定性
-
----
-
-如有问题，请查看日志文件：
-```bash
-tail -f /tmp/feishu-bot-latest.log
-```
+1. 检查 `im:message` 权限
+2. 确认 `im.message.receive_v1` 已订阅
+3. 测试时用真实 @ mention

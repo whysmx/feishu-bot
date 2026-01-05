@@ -248,16 +248,14 @@ tail -200 /tmp/feishu-bot-test.log | grep "11:58"
 
 **消息接收日志**：
 ```
-[MessageHandler] Received group message: {...}
-[DEBUG] Original extracted content: '@Claude Stream Bot 测试'
-[DEBUG] After cleaning: content='测试'
+[MessageHandler] Received GROUP message: {...}
+[DEBUG] GROUP message: chat_id=oc_xxx is_mentioned=true content="测试"
 ```
 
 **处理日志**：
 ```
-[MessageHandler] Processing streaming chat from user xxx: 测试
-[HandleMessage] Processing message from chat xxx
-Card created and sent: card_id=xxx
+[StreamingTextHandler] Processing message with time-based streaming mode: receive_id=oc_xxx type=chat_id project_dir=/Users/you/project
+[ClaudeManager] Starting claude command: ...
 ```
 
 ### 3. 检查进程状态
@@ -295,9 +293,9 @@ tail -50 /tmp/feishu-bot-test.log | grep "connected"
 - 访问：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/event
 - 确认"已添加事件"中有 `im.message.receive_v1`
 
-4. **确认是真实 @mention**
-- 必须“按 `@` 并从候选列表选择机器人”
-- 纯文本 `@Claude Stream Bot` 不会触发事件
+4. **确认 @mention 触发方式**
+- 测试群聊命令时，必须“按 `@` 并从候选列表选择机器人”
+- 普通对话不要求 @，是否收到消息取决于飞书平台配置
 
 5. **检查事件日志**
 - 访问：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/logs?tab=event
@@ -314,7 +312,7 @@ mcp__chrome-devtools__click(uid=xxx)
 ```
 
 2. **消息格式不正确**
-- 确保包含 `@机器人` 前缀
+- 如果测试命令，请确保包含 `@机器人` 前缀
 - 检查是否有多余的空格或换行
 
 3. **页面未加载完成**
@@ -325,18 +323,18 @@ sleep 3
 
 ### 问题 3: @Mention 处理问题
 
-**现象**：Bot 收到的消息内容不正确
+**现象**：Bot 未正确识别 @ 或命令未触发
 
 **调试方法**：
 
-1. 查看原始提取内容日志：
+1. 查看群聊消息日志：
 ```bash
-grep "Original extracted content" /tmp/feishu-bot-test.log
+grep \"GROUP message\" /tmp/feishu-bot-test.log
 ```
 
-2. 查看清理后内容：
+2. 检查是否出现 `is_mentioned=true`：
 ```bash
-grep "After cleaning" /tmp/feishu-bot-test.log
+grep \"is_mentioned\" /tmp/feishu-bot-test.log
 ```
 
 3. 检查 `cleanMentionContent` 函数逻辑（`message.go:283`）

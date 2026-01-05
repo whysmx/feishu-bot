@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**飞书 Claude CLI 流式对话机器人** - 基于飞书平台和 Claude CLI 的智能对话机器人，支持流式文本输出和打字机效果。
+**飞书 Claude CLI 流式对话机器人** - 基于飞书平台和 Claude CLI 的智能对话机器人，支持流式文本输出与分段发送。
 
 这是一个 Go 项目，通过集成本地 Claude CLI 和飞书消息 API，实现实时流式对话功能。
 
@@ -15,7 +15,7 @@
 - 飞书 WebSocket 长连接
 - 流式文本分段发送（智能缓冲）
 - 直接消息触发流式对话
-- 打字机效果
+- 分段文本输出
 - **P2P（单聊）和群聊功能正常**
 
 ## 配置
@@ -28,8 +28,8 @@
 
 ### 权限要求
 - `im:message` - 获取与发送消息
-- `im:message:group_at_msg` - 群聊 @消息
-- `im:chat` - 访问群聊信息
+- `im:message.group_at_msg` - 群聊 @消息
+- `im:chat` - 访问群聊信息（可选）
 
 ### 事件订阅
 - 方式：WebSocket 长连接
@@ -122,7 +122,7 @@ grep "ERROR" /tmp/feishu-bot.log
     ↓
 Message Handler 处理
     ↓
-启动 Claude CLI (cc1 -p 命令)
+启动 Claude CLI (claude -p 命令)
     ↓
 解析 stream-json → 提取文本增量
     ↓
@@ -131,17 +131,18 @@ StreamingTextHandler 智能分段缓冲
     ├─ 20 秒持续时间
     └─ 30000 字符缓冲上限
     ↓
-飞书消息 API 发送（打字机效果）
+飞书消息 API 发送（分段文本消息）
 ```
 
 ## 关键技术点
 
 ### 1. Claude CLI 集成
 
-使用本地 `cc1` 命令（Claude CLI 别名）：
+使用本地 `claude` 命令：
 
 ```go
-cmd := exec.Command("cc1",
+cmd := exec.Command("claude",
+    "--dangerously-skip-permissions",
     "-p",                                // 非交互模式
     "--output-format", "stream-json",    // 流式 JSON
     "--include-partial-messages",        // 包含部分消息
