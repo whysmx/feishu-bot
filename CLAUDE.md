@@ -22,7 +22,7 @@
 
 ### 飞书应用配置
 应用配置存储在 `.env` 文件中：
-- 应用 ID：`cli_a9dc39c0c2b8dbc8`
+- 应用 ID：`cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
 - 应用密钥：存储在 `.env` 中（已从配置文件移除）
 - 基础域名：`https://open.feishu.cn`
 

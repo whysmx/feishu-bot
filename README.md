@@ -92,7 +92,7 @@
 cp .env.example .env
 
 # 编辑 .env 文件
-FEISHU_APP_ID=cli_a9dc39c0c2b8dbc8
+FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FEISHU_APP_SECRET=your_app_secret
 ```
 
@@ -176,7 +176,7 @@ wsClient.Start(context.Background())
 
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
-| `FEISHU_APP_ID` | 飞书应用 ID | `cli_a9dc39c0c2b8dbc8` |
+| `FEISHU_APP_ID` | 飞书应用 ID | `cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | `Y0psnqB52LC50Svx...` |
 | `GROUP_REQUIRE_MENTION` | 群聊是否必须@机器人（默认 false） | `false` |
 

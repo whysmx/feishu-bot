@@ -292,7 +292,7 @@ tail -50 /tmp/feishu-bot-test.log | grep "connected"
 应该看到：`[Info] connected to wss://msg-frontier.feishu.cn/ws/v2`
 
 3. **检查事件订阅**
-- 访问：https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/event
+- 访问：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/event
 - 确认"已添加事件"中有 `im.message.receive_v1`
 
 4. **确认是真实 @mention**
@@ -300,7 +300,7 @@ tail -50 /tmp/feishu-bot-test.log | grep "connected"
 - 纯文本 `@Claude Stream Bot` 不会触发事件
 
 5. **检查事件日志**
-- 访问：https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/logs?tab=event
+- 访问：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/logs?tab=event
 - 查看是否有事件推送记录
 
 ### 问题 2: 消息发送失败
@@ -422,21 +422,21 @@ mcp__chrome-devtools__take_snapshot()
 ### 5. 检查飞书平台状态
 
 **事件订阅页面**：
-- URL: https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/event
+- URL: https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/event
 - 检查项：
   - 订阅方式：长连接
   - 已添加事件：im.message.receive_v1
   - 权限状态：已开通
 
 **事件日志页面**：
-- URL: https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/logs?tab=event
+- URL: https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/logs?tab=event
 - 检查项：
   - 事件类型：im.message.receive_v1
   - 返回状态：SUCCESS
   - 事件推送耗时
 
 **版本管理页面**：
-- URL: https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/version
+- URL: https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/version
 - 检查项：
   - 是否有发布版本
   - 当前修改状态

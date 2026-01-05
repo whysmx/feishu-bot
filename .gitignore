@@ -43,3 +43,8 @@ configs/security/whitelist.yaml
 configs/config.yaml
 temlp/
 Claude-Code-Remote-Analysis.md
+
+# 敏感配置文件
+.env.backup
+*.bak
+*.backup

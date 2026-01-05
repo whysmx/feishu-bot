@@ -15,12 +15,12 @@
    - 应用名称：Claude Stream Bot（或自定义名称）
    - 应用描述：Claude CLI 流式对话机器人
 4. 创建后记录以下信息：
-   - **App ID**：`cli_a9dc39c0c2b8dbc8`（示例）
+   - **App ID**：`cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`（示例）
    - **App Secret**：从"凭证与基础信息"页面获取
 
 ### 2. 配置权限
 
-**访问地址**：https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/auth
+**访问地址**：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/auth
 
 **必需权限**：
 
@@ -39,7 +39,7 @@
 
 ### 3. 配置事件订阅
 
-**访问地址**：https://open.feishu.cn/app/cli_a9dc39c0c2b8dbc8/event
+**访问地址**：https://open.feishu.cn/app/cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/event
 
 **订阅方式**：使用长连接接收事件
 
@@ -130,7 +130,7 @@ grep "streaming chat" /tmp/feishu-bot.log
 
 ```bash
 # 飞书应用配置
-FEISHU_APP_ID=cli_a9dc39c0c2b8dbc8
+FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FEISHU_APP_SECRET=your_app_secret_here
 
 # 机器人配置（可选）
@@ -146,7 +146,7 @@ GROUP_REQUIRE_MENTION=false
 **configs/config.yaml**：
 ```yaml
 app:
-  id: "cli_a9dc39c0c2b8dbc8"
+  id: "cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   name: "Claude Stream Bot"
   verification_token: ""
 
@@ -263,7 +263,7 @@ grep -i "error" /tmp/feishu-bot.log
 **应用信息**：
 ```yaml
 应用类型: 企业自建应用
-App ID: cli_a9dc39c0c2b8dbc8
+App ID: cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 App Secret: [从飞书平台获取]
 ```
 
