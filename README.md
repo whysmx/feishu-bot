@@ -53,10 +53,9 @@
    - `im:message.group_at_msg`（群聊 @ 消息）
 4. 事件订阅：选择**长连接**并添加 `im.message.receive_v1`
 
-![00](https://github.com/user-attachments/assets/7ecfc374-5b49-4c20-9793-f68aba5adcc6)
+<img src="https://github.com/user-attachments/assets/7ecfc374-5b49-4c20-9793-f68aba5adcc6" width="700"/>
 
-
-![01](https://github.com/user-attachments/assets/72dffe06-3f59-4b0d-9710-8f18952bcbbc)
+<img src="https://github.com/user-attachments/assets/72dffe06-3f59-4b0d-9710-8f18952bcbbc" width="700"/>
 
 
 ### 3. 配置环境变量
@@ -118,9 +117,9 @@ make build
 ```
 @机器人 help
 ```
-![a1](https://github.com/user-attachments/assets/ef45923c-8e90-4e12-9dda-89317f2ab4e4)
+<img src="https://github.com/user-attachments/assets/ef45923c-8e90-4e12-9dda-89317f2ab4e4" width="600"/>
 
-![a2](https://github.com/user-attachments/assets/65fc4a09-759b-46dc-b386-5cd981b169e4)
+<img src="https://github.com/user-attachments/assets/65fc4a09-759b-46dc-b386-5cd981b169e4" width="600"/>
 
 
 
