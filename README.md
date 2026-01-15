@@ -53,6 +53,12 @@
    - `im:message.group_at_msg`（群聊 @ 消息）
 4. 事件订阅：选择**长连接**并添加 `im.message.receive_v1`
 
+![00](https://github.com/user-attachments/assets/7ecfc374-5b49-4c20-9793-f68aba5adcc6)
+
+
+![01](https://github.com/user-attachments/assets/72dffe06-3f59-4b0d-9710-8f18952bcbbc)
+
+
 ### 3. 配置环境变量
 
 ```bash
@@ -112,6 +118,11 @@ make build
 ```
 @机器人 help
 ```
+![a1](https://github.com/user-attachments/assets/ef45923c-8e90-4e12-9dda-89317f2ab4e4)
+
+![a2](https://github.com/user-attachments/assets/65fc4a09-759b-46dc-b386-5cd981b169e4)
+
+
 
 显示指令列表与当前绑定。
 
