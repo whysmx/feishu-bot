@@ -1,0 +1,7 @@
+{
+  "base_dir": "/path/to/your/projects",
+  "project_paths": {
+    "oc_example_chat_id_1": "/path/to/project1",
+    "oc_example_chat_id_2": "/path/to/project2"
+  }
+}

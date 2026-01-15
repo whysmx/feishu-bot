@@ -48,3 +48,4 @@ Claude-Code-Remote-Analysis.md
 .env.backup
 *.bak
 *.backup
+configs/chat_config.json
